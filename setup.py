@@ -1,0 +1,20 @@
+#! /usr/bin/env python
+
+from setuptools import setup
+
+setup(
+    name = 'pwnvasive',
+    version = '0.1',
+    packages=['pwnvasive'],
+    # Metadata
+    author = 'Philippe BIONDI',
+    author_email = 'phil@secdev.org',
+    description = 'pwnvasive',
+    install_requires = [
+        "asyncssh",
+        "aiocmd",
+    ]
+    license = 'GPLv2',
+    # keywords = '',
+
+)
