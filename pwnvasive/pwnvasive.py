@@ -88,7 +88,16 @@ class Mapping(object):
     def __json__(self):
         return self.to_json()
     def __repr__(self):
-        r = ", ".join(f"{k}={v}" for k,v in self.values.items() if v is not None)
+        def fmtval(v):
+            if type(v) is list:
+                return [fmtval(x) for x in v]
+            if type(v) is dict:
+                return {k:fmtval(v) for k,v in v.items()}
+            v = f"{v}"
+            if len(v) > 20:
+                v = f"{v[:5]}...({len(v)})...{v[-5:]}"
+            return v
+        r = ", ".join(f"{k}={fmtval(v)}" for k,v in self.values.items() if v is not None)
         return f"<{r}>"
 
 class Net(Mapping):
