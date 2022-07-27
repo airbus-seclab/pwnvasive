@@ -603,10 +603,10 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             try:
                 sout,serr = await node.run(cmd)
             except Exception as e:
-                print(f"-----[{node}]-----")
+                print(f"-----[{node.shortname}]-----")
                 print(e)
             else:
-                print(f"-----[{node.session}]-----")
+                print(f"-----[{node.shortname}]-----")
                 print(sout)
 
         nodes = self.cfg.nodes.select(selector)
@@ -621,11 +621,11 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             try:
                 await node.connect()
             except Exception as e:
-                print(f"------[{node}]------")
+                print(f"------[{node.shortname}]------")
                 print(e)
             else:
                 nfo = await node.os.get_all()
-                print(f"------[{node}]------")
+                print(f"------[{node.shortname}]------")
                 print(json.dumps(nfo, indent=4))
         await asyncio.gather(*[print_info(node) for node in nodes])
 
