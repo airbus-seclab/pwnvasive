@@ -14,6 +14,7 @@ import zlib
 import re
 from collections import OrderedDict,Counter
 from itertools import islice
+import functools
 from contextvars import ContextVar
 
 logging.basicConfig()
@@ -275,6 +276,93 @@ class Node(Mapping):
         if self.values.get("os") == "linux":
             self.os = Linux(self)
 
+
+    def ensure(state):
+        def deco(func):
+            @functools.wraps(func)
+            async def wrapped(self, *args, **kargs):
+                if self.state.value < state.value:
+                    await getattr(self, f"ensure_{state.name}")()
+                return await func(self, *args, **kargs)
+            return wrapped
+        return deco
+
+    def skip_if(state):
+        def deco(func):
+            @functools.wraps(func)
+            async def wrapped(self, *args, **kargs):
+                if self.state.value >= state.value:
+                    return True
+                return await func(self, *args, **kargs)
+            return wrapped
+        return deco
+
+
+    @skip_if(States.INVENTORIED)
+    async def ensure_INVENTORIED(self):
+        pass
+
+    @skip_if(States.REACHED)
+    async def ensure_REACHED(self):
+        if self.jump_host is not None:
+            raise NotImplementedError("Jump host connectivity test")
+        await asyncio.open_connection(self.ip, self.port)
+        self.state = States.REACHED
+        self.values["reachable"] = True
+        return True
+
+    async def _test_creds(self, login, pwd):
+        opt = asyncssh.SSHClientConnectionOptions(username=login, password=pwd, known_hosts=None)
+        try:
+            sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt)
+        except Exception as e:
+            print(f"Failed {login} {pwd}: {e}") 
+            return [login,pwd],False,None
+        return [login,pwd],True,sess
+
+    @skip_if(States.CONNECTED)
+    @ensure(States.REACHED)
+    async def ensure_CONNECTED(self):
+        # XXX manage keys
+        if self.ssh_login is None or self.ssh_password is None:
+            logins = [l.login for l in self.config.logins]
+            passwords = [p.password for p in self.config.passwords]
+
+            res = await asyncio.gather(*[
+                self._test_creds(l,p)
+                for l in logins for p in passwords
+                if [l,p] not in self.tested_credentials])
+
+            self.tested_credentials.extend([cred for cred,r,_ in res if not r])
+            self.working_credentials.extend([cred for cred,r,_ in res if r])
+            if self.working_credentials:
+                self.state = States.CONNECTED
+                self.values["ssh_login"],self.values["ssh_password"] = self.working_credentials[0]
+                for _,r,sess in res:
+                    if r:
+                        break
+            return None
+        else:
+            _,_,sess = await self._test_creds(self.ssh_login, self.ssh_password)
+        self.session = NodeSession(self, sess)
+        self.state = States.CONNECTED
+        return self.session
+
+    @skip_if(States.IDENTIFIED)
+    @ensure(States.CONNECTED)    
+    async def ensure_IDENTIFIED(self):
+        sout,serr = await self._run("uname -o")
+        if sout.startswith("Linux"):
+            self.os = Linux(self)
+            self.values["os"] = "linux"
+            self.state = States.IDENTIFIED
+            return True
+        else:
+            return False
+
+
+
+
     async def get_file(self, path):
         async with self.session.session.start_sftp_client() as sftp:
             f = await sftp.open(path, "rb")
@@ -293,89 +381,28 @@ class Node(Mapping):
 
 
 
-    async def test_creds(self, login, pwd):
-        opt = asyncssh.SSHClientConnectionOptions(username=login, password=pwd, known_hosts=None)
 
-        try:
-            sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt)
-        except Exception as e:
-            print(f"Failed {login} {pwd}: {e}") 
-            return [login,pwd],False,None
-        return [login,pwd],True,sess
-
-    async def ensure_reached(self):
-        if self.state.value >= States.REACHED.value:
-            return True
-        if self.jump_host is not None:
-            raise NotImplementedError("Jump host connectivity test")
-        await asyncio.open_connection(self.ip, self.port)
-        self.state = States.REACHED
-        self.values["reachable"] = True
-        return True
-
-    async def ensure_connected(self):
-        if self.state.value >= States.CONNECTED.value:
-            return self.session
-        if not await self.ensure_reached():
-            return False
-
-        # XXX manage keys
-        if self.ssh_login is None or self.ssh_password is None:
-            logins = [l.login for l in self.config.logins]
-            passwords = [p.password for p in self.config.passwords]
-
-            res = await asyncio.gather(*[
-                self.test_creds(l,p)
-                for l in logins for p in passwords
-                if [l,p] not in self.tested_credentials])
-
-            self.tested_credentials.extend([cred for cred,r,_ in res if not r])
-            self.working_credentials.extend([cred for cred,r,_ in res if r])
-            if self.working_credentials:
-                self.state = States.CONNECTED
-                self.values["ssh_login"],self.values["ssh_password"] = self.working_credentials[0]
-                for _,r,sess in res:
-                    if r:
-                        break
-            return None
-        else:
-            _,_,sess = await self.test_creds(self.ssh_login, self.ssh_password)
-
-        self.session = NodeSession(self, sess)
-        self.state = States.CONNECTED
-        return self.session
-
-    async def ensure_identified(self):
-        if self.state.value >= States.IDENTIFIED.value:
-            return True
-        if not await self.ensure_connected():
-            return False
-        sout,serr = await self._run("uname -o")
-        if sout.startswith("Linux"):
-            self.os = Linux(self)
-            self.values["os"] = "linux"
-            self.state = States.IDENTIFIED
-            return True
-        else:
-            return False
 
     async def _run(self, cmd):
         r = await self.session.run(cmd)
         return r.stdout, r.stderr
 
+    @ensure(States.CONNECTED)
+    async def connect(self):
+        return self.session
+
+    @ensure(States.CONNECTED)
     async def run(self, cmd):
-        if not await self.ensure_identified():
-            raise Exception(f"could not connect to {self}")
         return await self._run(cmd)
+
 
     async def _sftp_get_zfile(self, sftp, fname):
         f = await sftp.open(fname, "rb")
         content = await f.read()
         return base64.b85encode(zlib.compress(content)).decode("ascii")
 
+    @ensure(States.IDENTIFIED)
     async def get_files(self, *paths):
-        if not await self.ensure_identified():
-            raise Exception(f"could not connect to {self}")
         async with self.session.session.start_sftp_client() as sftp:
             try:
                 lst = await sftp.glob(paths, error_handler=lambda x:None)
@@ -391,26 +418,17 @@ class Node(Mapping):
         self.files.update(d)
         return d
 
+    @ensure(States.IDENTIFIED)
     async def get_all_files(self):
-        if not await self.ensure_identified():
-            raise Exception(f"could not connect to {self}")
         lst = [f.path for f in self.os.file_list]
         return await self.get_files(*lst)
 
+    @ensure(States.IDENTIFIED)
     async def get_logins(self):
-        if not await self.ensure_identified():
-            raise Exception(f"could not connect to {self}")
         return await self.os.collect_logins()
 
 
-    async def connect(self):
-        if not await self.ensure_identified():
-            raise Exception(f"could not connect to {self}")
-        return self.session
 
-
-    async def collect(self):
-        pass
 
 
 class NodeSession(object):
