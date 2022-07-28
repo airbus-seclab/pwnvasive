@@ -351,7 +351,7 @@ class Node(Mapping):
         return self.session
 
     @skip_if(States.IDENTIFIED)
-    @ensure(States.CONNECTED)    
+    @ensure(States.CONNECTED)
     async def ensure_IDENTIFIED(self):
         r = await self.session.run("uname -o")
         if r.stdout.startswith("Linux"):
