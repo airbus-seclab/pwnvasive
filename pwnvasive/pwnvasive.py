@@ -409,12 +409,12 @@ class Node(Mapping):
                 lst = await sftp.glob(paths, error_handler=lambda x:None)
             except asyncssh.SFTPNoSuchFile:
                 return {}
+            filtered_lst = [f for f in lst if f not in self.files]
             contents = await gather_limited(
                 concurrency,
-                *(self._sftp_get_file(sftp, f)
-                  for f in lst if f not in self.files),
+                *(self._sftp_get_file(sftp, f) for f in filtered_lst),
                 return_exceptions=True)
-        d = { k:v for k,v in zip(lst, contents) if type(v) is str }
+        d = { k:v for k,v in zip(filtered_lst, contents) if type(v) is bytes }
         return d
 
 
