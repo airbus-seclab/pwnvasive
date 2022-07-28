@@ -418,6 +418,7 @@ class Node(Mapping):
         return d
 
 
+    @ensure(States.IDENTIFIED)
     async def collect_files(self):
         lst = [f.path for f in self.os.file_list]
         return await self.mget(*lst)
