@@ -368,6 +368,11 @@ class Node(Mapping):
     def remember_file(self, path, content):
         self.files[path] = base64.b85encode(zlib.compress(content)).decode("ascii")
 
+    def iter_files(self):
+        for f,c in self.files.items():
+            c2 = zlib.decompress(base64.b85decode(c.encode("ascii")))
+            yield f,c2
+
     @ensure(States.CONNECTED)
     async def connect(self):
         return self.session
