@@ -490,9 +490,19 @@ class Config(object):
         if fname is None:
             fname = self.fname
         self.config["state"].update(self.objects)
-        with open(fname, "w") as f:
-            json.dump(self.config, f, cls=JSONEnc)
-
+        import sys
+        try:
+            with open(fname+".tmp", "w") as f:
+                json.dump(self.config, f, cls=JSONEnc)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            print("Failed to save data from the current session.")
+            print("You can still recover data from self.nodes, self.passwords, etc.")
+            import pdb
+            sys.last_traceback = e.__traceback__
+            pdb.pm()
+        else:
+            os.rename(fname+".tmp", fname)
 
 
 class Link(object):
