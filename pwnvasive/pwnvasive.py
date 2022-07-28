@@ -366,7 +366,7 @@ class Node(Mapping):
 
 
     def remember_file(self, path, content):
-        self.files[path] = base64.b85encode(zlib.compress(c)).decode("ascii")
+        self.files[path] = base64.b85encode(zlib.compress(content)).decode("ascii")
 
     @ensure(States.CONNECTED)
     async def connect(self):
