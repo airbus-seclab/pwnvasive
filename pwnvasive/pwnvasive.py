@@ -688,7 +688,23 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         print(f"{node.shortname}: retrieved {len(files)} new files")
 
 
-
+    ########## EXTRACT
+    re_key = re.compile(b"(-----BEGIN ([A-Z0-9 _]*?)PRIVATE KEY-----.*?\n-----END \\2PRIVATE KEY-----)",
+                        re.DOTALL)
+    def do_extract_sshkeys(self, selector):
+        keys = []
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            for _,c in node.iter_files():
+                for k,_ in self.re_key.findall(c):
+                    try:
+                        k = k.decode("ascii")
+                    except:
+                        continue
+                    key = SSHKeys(config=self.cfg, key=k)
+                    keys.append(key)
+        n = self.cfg.sshkeys.add_batch(keys)
+        print(f"{n} new potential ssh keys discovered")
 
 
 
