@@ -346,7 +346,7 @@ class Node(Mapping):
             return None
         else:
             _,_,sess = await self._test_creds(self.ssh_login, self.ssh_password)
-        self.session = NodeSession(self, sess)
+        self.session = sess
         self.state = States.CONNECTED
         return self.session
 
@@ -384,12 +384,12 @@ class Node(Mapping):
 
     @ensure(States.CONNECTED)
     async def glob(self, pattern):
-        async with self.session.session.start_sftp_client() as sftp:
+        async with self.session.start_sftp_client() as sftp:
             return await sftp.glob(pattern)
 
     @ensure(States.CONNECTED)
     async def get(self, path):
-        async with self.session.session.start_sftp_client() as sftp:
+        async with self.session.start_sftp_client() as sftp:
             f = await sftp.open(path, "rb")
             content = await f.read()
         self.remember_file(path, content)
@@ -404,7 +404,7 @@ class Node(Mapping):
 
     @ensure(States.IDENTIFIED)
     async def mget(self, *paths, concurrency=10):
-        async with self.session.session.start_sftp_client() as sftp:
+        async with self.session.start_sftp_client() as sftp:
             try:
                 lst = await sftp.glob(paths, error_handler=lambda x:None)
             except asyncssh.SFTPNoSuchFile:
@@ -435,20 +435,6 @@ class Node(Mapping):
     async def collect_infos(self):
         return await self.os.get_all()
 
-    
-
-
-
-class NodeSession(object):
-    def __init__(self, node, session):
-        self.node = node
-        self.session = session
-    def __repr__(self):
-        return f"<session to {self.node.ip}>"
-    async def run(self, *args, **kargs):
-        return await self.session.run(*args, **kargs)
-    async def start_sftp_client(self, *args, **kargs):
-        return await self.session.start_sftp_client(*args, **kargs)
 
 
 DEFAULT_CONFIG = {
