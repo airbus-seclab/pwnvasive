@@ -733,6 +733,16 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         n = self.cfg.sshkeys.add_batch(keys)
         print(f"{n} new potential ssh keys discovered")
 
+    def do_extract_networks(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        nets = []
+        for node in nodes:
+            for r in node.routes:
+                dst = r.get("dst")
+                if dst and dst != "default":
+                    nets.append(Net(config=self.cfg, cidr=dst))
+        n = self.cfg.networks.add_batch(nets)
+        print(f"Added {n} new networks")
 
 
 def main(args=None):
