@@ -15,7 +15,6 @@ import re
 from collections import OrderedDict,Counter
 from itertools import islice
 import functools
-from contextvars import ContextVar
 
 logging.basicConfig()
 logging.getLogger("asyncio").setLevel(logging.WARNING)
