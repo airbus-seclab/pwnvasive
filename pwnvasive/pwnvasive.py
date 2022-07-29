@@ -69,6 +69,28 @@ class Linux(OS):
     async def get_uid(self):
         return await self.run("id -u")
 
+    async def get_routes(self):
+        # too bad ip -j is not supported on busybox :(
+        r = await self.run("ip route show")
+        routes = []
+        synonyms = { "via":"gateway", "src":"prefsrc"}
+        flagnames = ["linkdown"]
+        for l  in r.splitlines():
+            flags = []
+            route = {"flags":flags}
+            w = l.split()
+            w.reverse()
+            route["dst"] = w.pop()
+            while w:
+                n = w.pop()
+                n = synonyms.get(n, n) # attempt to stay compatible with ip -j
+                if n in flagnames:
+                    flags.append(n)
+                else:
+                    route[n] = w.pop()
+            routes.append(route)
+        return routes
+
     async def get_all(self):
         keys = ["hostname", "os", "uid"]
         vals = await asyncio.gather(*[getattr(self, f"get_{k}")() for k in keys])
@@ -262,6 +284,7 @@ class Node(Mapping):
         "controlled":          (False, bool),
         "reachable":           (False, bool),
         "jump_host":           (None, tuple),
+        "routes":              ([], list),
         "ssh_login":           (None, str),
         "ssh_password":        (None, str),
         "ssh_key":             (None, str),
@@ -434,6 +457,12 @@ class Node(Mapping):
     @ensure(States.IDENTIFIED)
     async def collect_infos(self):
         return await self.os.get_all()
+
+    @ensure(States.IDENTIFIED)
+    async def collect_routes(self):
+        routes = await self.os.get_routes()
+        self.values["routes"] = routes
+        return routes
 
 
 
@@ -672,6 +701,18 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     def cb_collect_files(self, node, t):
         files = t.result()
         print(f"{node.shortname}: retrieved {len(files)} new files")
+
+
+    async def do_collect_routes(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            t = asyncio.create_task(node.collect_routes())
+            t.add_done_callback(lambda ctx: self.cb_collect_routes(node, ctx))
+
+    def cb_collect_routes(self, node, t):
+        routes = t.result()
+        print(f"{node.shortname}: retrieved {len(routes)} routes")
+
 
 
     ########## EXTRACT
