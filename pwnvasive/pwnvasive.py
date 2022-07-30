@@ -743,15 +743,19 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
     def do_extract_networks(self, selector):
         nodes = self.cfg.nodes.select(selector)
-        nets = []
+        extnets = []
+        extnodes = []
         for node in nodes:
             for r in node.routes:
                 dst = r.get("dst")
                 if dst and dst != "default":
-                    nets.append(Net(config=self.cfg, cidr=dst))
-        n = self.cfg.networks.add_batch(nets)
-        print(f"Added {n} new networks")
-
+                    extnets.append(Net(config=self.cfg, cidr=dst))
+                gw = r.get("gateway")
+                if gw:
+                    extnodes.append(Node(config=self.cfg, ip=gw))
+        nnets = self.cfg.networks.add_batch(extnets)
+        nnodes = self.cfg.nodes.add_batch(extnodes)
+        print(f"Added {nnets} new networks and {nnodes} new nodes")
 
 def main(args=None):
     parser = argparse.ArgumentParser()
