@@ -370,6 +370,9 @@ class Node(Mapping):
                 for _,r,sess in res:
                     if r:
                         break
+                self.session = sess
+            else:
+                raise NoCredsFound(self.shortname)
             return None
         else:
             _,_,sess = await self._test_creds(self.ssh_login, self.ssh_password)
