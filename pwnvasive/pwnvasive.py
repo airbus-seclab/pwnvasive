@@ -178,6 +178,9 @@ class Collection(object):
         old.update(newobj)
         self[newobj] = newobj
 
+    def rehash(self):
+        self.coll = OrderedDict([(x.key,x) for x in self.coll.values()])
+
     def __repr__(self):
         return "<Collection: %s>" % ("\n".join(f"{o.key}" for o in self.values()))
     def string_menu(self):
@@ -603,6 +606,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                     new_ = t(val[f])
                     print(f"  + {f}: {old} --> {new_}")
                     o.values[f] = new_
+        self.cfg.objects[obj].rehash()
 
     ########## CNX
 
