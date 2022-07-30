@@ -346,7 +346,6 @@ class Node(Mapping):
         try:
             sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt)
         except Exception as e:
-            print(f"Failed {login} {pwd}: {e}") 
             return [login,pwd],False,None
         return [login,pwd],True,sess
 
