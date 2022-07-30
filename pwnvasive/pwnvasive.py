@@ -171,10 +171,13 @@ class Collection(object):
                 self.coll[o.key] = o
                 n += 1
         return n
-    def update(self, obj):
-        if obj not in self:
-            raise KeyError(f"Key {obj.key} not found")
-        self[obj].update(obj)
+    def update(self, oldobj, newobj):
+        if oldobj not in self:
+            raise KeyError(repr(oldobj.key))
+        old = self.pop(oldobj)
+        old.update(newobj)
+        self[newobj] = newobj
+
     def __repr__(self):
         return "<Collection: %s>" % ("\n".join(f"{o.key}" for o in self.values()))
     def string_menu(self):
