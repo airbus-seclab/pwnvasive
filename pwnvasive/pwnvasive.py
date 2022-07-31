@@ -12,9 +12,11 @@ from enum import Enum,auto
 import base64
 import zlib
 import re
-from collections import OrderedDict,Counter
+from collections import OrderedDict,Counter,defaultdict
 from itertools import islice
 import functools
+import graphviz
+from ipaddress import ip_address,ip_network
 
 logging.basicConfig()
 logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -761,6 +763,70 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         nnets = self.cfg.networks.add_batch(extnets)
         nnodes = self.cfg.nodes.add_batch(extnodes)
         print(f"Added {nnets} new networks and {nnodes} new nodes")
+
+    ########## COMPUTE
+
+    def do_compute_network(self):
+        netgraph = defaultdict(set)
+        remotes = defaultdict(set)
+        ip2name = {}
+        for node in self.cfg.nodes:
+            devs = defaultdict(set)
+            for r in node.routes:
+                src = r.get("prefsrc")
+                ip2name[src] = node.nodename
+                if r.get("scope") == "link":
+                    print("###################",r)
+                    dev = r.get("dev")
+                    dst = r.get("dst")
+                    if dev and dst and "/" in dst:
+                        print("===>", dev, "--", dst)
+                        devs[dev].add(dst)
+            print(devs)
+            for r in node.routes:
+                print("###################",r)
+                scope = r.get("scope")
+                dst = r.get("dst")
+                gw = r.get("gateway")
+                dev = r.get("dev")
+                if gw:
+                    if dev in devs:
+                        print(devs[dev])
+                        for net in devs[dev]:
+                            if ip_address(gw) in ip_network(net):
+                                netgraph[net].add(ip2name.get(gw, gw))
+                                print("==> netgraph1", net, gw)
+
+                    if dst:
+                        print("==> remote", dst, gw)
+                        remotes[dst].add(ip2name.get(gw,gw))
+                else:
+                    if dst  and scope == "link":
+                        netgraph[dst].add(node.nodename)
+                        print("==> netgraph2", dst, node.nodename)
+
+        g = graphviz.Graph()
+        g.attr("node", shape="ellipse")
+        for net in set(netgraph)|set(remotes):
+            if "/" in net:
+                g.node(net)
+        g.attr("node", shape="box")
+        for node in {n for ns in netgraph.values() for n in ns}:
+                g.node(node)
+        g.attr("edge", style="solid")
+        for net,nodes in netgraph.items():
+            for node in nodes:
+                g.edge(net,node)
+
+        g.attr("edge", style="dashed")
+        for net,nodes in remotes.items():
+            for node in nodes:
+                g.edge(net,node)
+
+        print(g.source)
+        print(remotes)
+        print(netgraph)
+        g.render(engine="fdp", view=True)
 
 def main(args=None):
     parser = argparse.ArgumentParser()
