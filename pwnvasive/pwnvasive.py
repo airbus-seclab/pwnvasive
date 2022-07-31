@@ -287,6 +287,7 @@ class Node(Mapping):
         "ip":                  ("127.0.0.1", str),
         "port":                (22, int),
         "controlled":          (False, bool),
+        "hostname":            (None, str),
         "reachable":           (False, bool),
         "jump_host":           (None, tuple),
         "routes":              ([], list),
@@ -388,6 +389,7 @@ class Node(Mapping):
             self.os = Linux(self)
             self.values["os"] = "linux"
             self.state = States.IDENTIFIED
+            self.values["hostname"] = await self.os.get_hostname()
             return True
         else:
             return False
