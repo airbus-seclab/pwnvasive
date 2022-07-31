@@ -274,9 +274,39 @@ class Passwords(Mapping):
 
 class SSHKeys(Mapping):
     _fields = {
-        "key":      (None, str),
-        "password": (None, str),
+        "sshkey":      (None, str),
     }
+    _sshkey = None
+    def __init__(self, **kargs):
+        super().__init__(**kargs)
+        try:
+            self._sshkey = asyncssh.import_private_key(self.sshkey)
+        except asyncssh.KeyImportError:
+            pass
+        if self._sshkey is None:
+            self.find_passphrase()
+
+    def test_key_passphrase(self, pwd):
+        try:
+            asyncssh.import_private_key(self.sshkey, passphrase=pwd)
+        except asyncssh.KeyEncryptionError:
+            return False
+        return True
+
+
+    def find_passphrase(self, passwords=None):
+        if passwords is None:
+            passwords = [p.password for p in self.config.passwords]
+        for p in passwords:
+            if self.test_key_passphrase(p):
+                found = p
+                break
+        else:
+            return False
+        self._sshkey = asyncssh.import_private_key(self.sshkey, found)
+        # store decrypted key
+        self.values["sshkey"] = self._sshkey.export_private_key().decode("ascii")
+
 
 class LinuxFiles(Mapping):
     _fields = {
