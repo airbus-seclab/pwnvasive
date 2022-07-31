@@ -306,6 +306,9 @@ class Node(Mapping):
         self.session = None
         if self.values.get("os") == "linux":
             self.os = Linux(self)
+    @property
+    def nodename(self):
+        return self.hostname or self.ip
 
 
     def ensure(state):
