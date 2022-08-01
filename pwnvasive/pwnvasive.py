@@ -1,5 +1,6 @@
 #! /usr/bin/env python
 
+import sys
 import asyncio
 import asyncssh
 import json
@@ -555,19 +556,9 @@ class Config(object):
         if fname is None:
             fname = self.fname
         self.config["state"].update(self.objects)
-        import sys
-        try:
-            with open(fname+".tmp", "w") as f:
-                json.dump(self.config, f, cls=JSONEnc)
-        except Exception as e:
-            print(f"ERROR: {e}")
-            print("Failed to save data from the current session.")
-            print("You can still recover data from self.nodes, self.passwords, etc.")
-            import pdb
-            sys.last_traceback = e.__traceback__
-            pdb.pm()
-        else:
-            os.rename(fname+".tmp", fname)
+        with open(fname+".tmp", "w") as f:
+            json.dump(self.config, f, cls=JSONEnc)
+        os.rename(fname+".tmp", fname) # overwrite file only if json dump completed
 
 
 class Link(object):
@@ -864,9 +855,16 @@ def main(args=None):
 
     options = parser.parse_args(args)
 
-    with Config(options.database) as options.config:
-        asyncio.run(PwnCLI(options).run())
-#    asyncio.get_event_loop().run_until_complete(MyCLI().run())
+    try:
+        with Config(options.database) as options.config:
+            asyncio.run(PwnCLI(options).run())
+    except Exception as e:
+        print(f"ERROR: {e}")
+        print("You can still recover data from options.config.nodes, etc.")
+        import pdb
+        sys.last_traceback = e.__traceback__
+        pdb.pm()
+
 
 if __name__ == "__main__":
     main()
