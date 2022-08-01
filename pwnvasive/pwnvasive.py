@@ -326,6 +326,7 @@ class SSHKeys(Mapping):
         self._sshkey = asyncssh.import_private_key(self.sshkey, found)
         # store decrypted key ; use pkcs1-pem for determinism
         self.values["sshkey"] = self._sshkey.export_private_key(format_name="pkcs1-pem").decode("ascii")
+        return True
 
     def __repr__(self):
         dec = "enrypted" if self._sshkey is None else "decrypted"
