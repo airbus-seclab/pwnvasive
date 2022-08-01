@@ -18,6 +18,7 @@ from itertools import islice
 import functools
 import graphviz
 from ipaddress import ip_address,ip_network
+import pdb
 
 logging.basicConfig()
 logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -616,6 +617,8 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     def do_eval(self, cmd):
         print(eval(cmd))
 
+    def do_pdb(self):
+        pdb.set_trace()
 
     ########## MANAGE COLLECTIONS AND MAPPINGS
 
@@ -918,7 +921,6 @@ def main(args=None):
     except Exception as e:
         print(f"ERROR: {e}")
         print("You can still recover data from options.config.nodes, etc.")
-        import pdb
         sys.last_traceback = e.__traceback__
         pdb.pm()
 
