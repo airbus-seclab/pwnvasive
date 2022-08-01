@@ -612,6 +612,9 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             print(f"----- {obj.key} -----")
             print(json.dumps(obj.to_json(), indent=4))
 
+    def _show_completions(self):
+        return WordCompleter(list(self.cfg.objects))
+
     def do_add(self, obj, val=""):
         try:
             val = self.str2map(val)
