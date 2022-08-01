@@ -332,9 +332,14 @@ class SSHKeys(Mapping):
         return True
 
     def __repr__(self):
-        dec = "enrypted" if self._sshkey is None else "decrypted"
-        h = self._sshkey.get_fingerprint() if self._sshkey else "- "
-        return f"<{dec} ssh key: {self.origin} {h}>"
+        dec = "encrypted" if self._sshkey is None else "decrypted"
+        if self._sshkey:
+            h = self._sshkey.get_fingerprint()
+            c = self._sshkey.get_comment()
+            a = self._sshkey.get_algorithm()
+        else:
+            h = c = a = "(-)"
+        return f"<{dec} ssh key: {a} {h} {c} {self.origin}>"
 
 class LinuxFiles(Mapping):
     _fields = {
