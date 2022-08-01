@@ -816,6 +816,16 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         n = self.cfg.sshkeys.add_batch(keys)
         print(f"{n} new potential ssh keys discovered")
 
+    def do_decrypt_sshkeys(self, selector=None):
+        keys = self.cfg.sshkeys.select(selector)
+        n = 0
+        for k in keys:
+            if k._sshkey is None:
+                if k.find_passphrase():
+                    n += 1
+                    print(k)
+        print(f"Decrypted {n} ssh keys")
+
     def do_extract_networks(self, selector):
         nodes = self.cfg.nodes.select(selector)
         extnets = []
