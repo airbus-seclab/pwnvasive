@@ -694,6 +694,19 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     def _del_completions(self):
         return WordCompleter(list(self.cfg._objects))
 
+
+
+    def do_cat(self, selector, pth):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            try:
+                c = node.recall_file(pth)
+            except KeyError:
+                pass
+            else:
+                print("----- {node.shortname} -----")
+                print(c)
+
     ########## CNX
 
     async def do_cnx(self, selector=None):
