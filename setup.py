@@ -13,6 +13,7 @@ setup(
     install_requires = [
         "asyncssh",
         "aiocmd",
+        "graphviz",
         "bcrypt",
     ]
     license = 'GPLv2',
