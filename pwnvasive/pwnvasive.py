@@ -150,6 +150,24 @@ class Collection(object):
             if type(selector) is str:
                 selector = self.mapping.str2key(selector)
             return self.coll[selector]
+    def __delitem__(self, selector):
+        if isinstance(selector, Mapping):
+            key = selector.key
+        else:
+            try:
+                selector = int(selector)
+            except:
+                pass
+            else:
+                try:
+                    selector = next(islice(self.coll.values(), selector, None))
+                    key = selector.key
+                except StopIteration:
+                    raise KeyError(selector)
+            if type(selector) is str:
+                key = self.mapping.str2key(selector)
+        del(self.coll[key])
+
     def select(self, selector=None):
         if selector in [None, "all", "*"]:
             return list(self.coll.values())
@@ -654,6 +672,15 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                     print(f"  + {f}: {old} --> {new_}")
                     o.values[f] = new_
         self.cfg.objects[obj].rehash()
+
+    def do_del(self, obj, selector):
+        objs = self.cfg.objects[obj]
+        for o in objs.select(selector):
+            print(f"deleting {obj} {o.key}")
+            del(objs[o])
+
+    def _del_completions(self):
+        return WordCompleter(list(self.cfg._objects))
 
     ########## CNX
 
