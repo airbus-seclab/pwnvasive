@@ -306,8 +306,8 @@ class SSHKeys(Mapping):
         else:
             return False
         self._sshkey = asyncssh.import_private_key(self.sshkey, found)
-        # store decrypted key
-        self.values["sshkey"] = self._sshkey.export_private_key().decode("ascii")
+        # store decrypted key ; use pkcs1-pem for determinism
+        self.values["sshkey"] = self._sshkey.export_private_key(format_name="pkcs1-pem").decode("ascii")
 
 
 class LinuxFiles(Mapping):
