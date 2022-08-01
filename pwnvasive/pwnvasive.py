@@ -247,7 +247,7 @@ class Mapping(object, metaclass=MappingMeta):
                 return [fmtval(x) for x in v]
             if type(v) is dict:
                 return {k:fmtval(v) for k,v in v.items()}
-            v = f"{v}"
+            v = f"{v}".strip()
             if len(v) > 20:
                 v = f"{v[:5]}...({len(v)})...{v[-5:]}"
             return v
