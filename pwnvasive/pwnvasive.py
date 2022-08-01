@@ -845,11 +845,12 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                     print(k)
         print(f"Decrypted {n} ssh keys")
 
-    def do_extract_networks(self, selector):
+    def do_extract_networks(self, selector=None):
         nodes = self.cfg.nodes.select(selector)
         extnets = []
         extnodes = []
         for node in nodes:
+            # Extract from routes
             for r in node.routes:
                 dst = r.get("dst")
                 if dst and dst != "default":
@@ -857,9 +858,21 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                 gw = r.get("gateway")
                 if gw:
                     extnodes.append(Node(config=self.cfg, ip=gw))
+            # Extract from known hosts:
+            for pth in node.files:
+                if pth.endswith("known_hosts"):
+                    try:
+                        c = node.recall_file(pth).decode("ascii")
+                    except UnicodeDecodeError:
+                        continue
+                    print(c)
+                    kh = asyncssh.import_known_hosts(c)
+                    for h in kh._exact_entries.keys():
+                        extnodes.append(Node(config=self.cfg, ip=h))
         nnets = self.cfg.networks.add_batch(extnets)
         nnodes = self.cfg.nodes.add_batch(extnodes)
         print(f"Added {nnets} new networks and {nnodes} new nodes")
+
 
     ########## COMPUTE
 
