@@ -356,9 +356,6 @@ class Node(Mapping):
         "reachable":           (False, bool),
         "jump_host":           (None, tuple),
         "routes":              ([], list),
-        "ssh_login":           (None, str),
-        "ssh_password":        (None, str),
-        "ssh_key":             (None, str),
         "tested_credentials":  ([], list),
         "working_credentials": ([], list),
         "os":                  (None, str),
@@ -410,42 +407,42 @@ class Node(Mapping):
         self.values["reachable"] = True
         return True
 
-    async def _test_creds(self, login, pwd):
-        opt = asyncssh.SSHClientConnectionOptions(username=login, password=pwd, known_hosts=None)
+    async def _test_creds(self, **creds):
+        use_creds = creds.copy()
+        ck = use_creds.pop("client_keys",None)
+        if ck:
+            use_creds["client_keys"] = asyncssh.import_private_key(ck)
+        opt = asyncssh.SSHClientConnectionOptions(**use_creds, known_hosts=None)
         try:
             sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt)
         except Exception as e:
-            return [login,pwd],False,None
-        return [login,pwd],True,sess
+            return creds,False,None
+        return creds,True,sess
 
     @skip_if(States.CONNECTED)
     @ensure(States.REACHED)
     async def ensure_CONNECTED(self):
-        # XXX manage keys
-        if self.ssh_login is None or self.ssh_password is None:
-            logins = [l.login for l in self.config.logins]
-            passwords = [p.password for p in self.config.passwords]
-
-            res = await asyncio.gather(*[
-                self._test_creds(l,p)
-                for l in logins for p in passwords
-                if [l,p] not in self.tested_credentials])
+        if not self.working_credentials:
+            c1 = [{"username":l.login, "password":p.password}
+                  for l in self.config.logins for p in self.config.passwords]
+            c2 = [{"username":l.login, "client_keys": s.sshkey}
+                  for l in self.config.logins for s in self.config.sshkeys if s._sshkey]
+            creds = (c for c in c1+c2 if c not in self.tested_credentials)
+            res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
 
             self.tested_credentials.extend([cred for cred,r,_ in res if not r])
             self.working_credentials.extend([cred for cred,r,_ in res if r])
             if self.working_credentials:
-                self.state = States.CONNECTED
-                self.values["ssh_login"],self.values["ssh_password"] = self.working_credentials[0]
                 for _,r,sess in res:
                     if r:
+                        self.session = sess
                         break
-                self.session = sess
             else:
                 raise NoCredsFound(self.shortname)
             return None
         else:
-            _,_,sess = await self._test_creds(self.ssh_login, self.ssh_password)
-        self.session = sess
+            _,_,sess = await self._test_creds(**self.working_credentials[0])
+            self.session = sess
         self.state = States.CONNECTED
         return self.session
 
