@@ -55,8 +55,6 @@ class OS(object):
         self.node = node
 
 class Linux(OS):
-    re_interesting = re.compile(r"history|pass|shadow|/id_|\.(xls|key|pub)$")
-
     @property
     def file_list(self):
         return self.node.config.linuxfiles
@@ -105,6 +103,7 @@ class Linux(OS):
         logins = set(x.split(":")[0] for x in out.splitlines())
         return list(logins)
 
+    re_interesting = re.compile(r"history|pass|shadow|known_host|/id_|\.(xls|key|pub)$")
     async def collect_filenames(self):
         ## XXX Avoid smb and nfs ?
         ## uglier than find -fstype but works with busybox' find
