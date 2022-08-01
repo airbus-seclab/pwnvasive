@@ -232,6 +232,8 @@ class Mapping(object, metaclass=MappingMeta):
         self.config = config
         self.values = {}
         for f,(v,_) in self._fields.items():
+            if type(v) in [list, dict]:
+                v = v.copy()
             self.values[f] = kargs.pop(f, v)
     def __getattr__(self, attr):
         if attr in self.values:
