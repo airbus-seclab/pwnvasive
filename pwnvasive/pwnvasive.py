@@ -309,6 +309,9 @@ class SSHKeys(Mapping):
         # store decrypted key ; use pkcs1-pem for determinism
         self.values["sshkey"] = self._sshkey.export_private_key(format_name="pkcs1-pem").decode("ascii")
 
+    def __repr__(self):
+        dec = "enrypted" if self._sshkey is None else "decrypted"
+        return f"<{dec} ssh key: {self.origin} >"
 
 class LinuxFiles(Mapping):
     _fields = {
