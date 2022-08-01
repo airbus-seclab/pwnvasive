@@ -150,8 +150,8 @@ class Collection(object):
             if type(selector) is str:
                 selector = self.mapping.str2key(selector)
             return self.coll[selector]
-    def select(self, selector):
-        if selector in ["all", "*"]:
+    def select(self, selector=None):
+        if selector in [None, "all", "*"]:
             return list(self.coll.values())
         else:
             return [self[selector]]
