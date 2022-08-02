@@ -890,39 +890,34 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         remotes = defaultdict(set)
         ip2name = {}
         for node in self.cfg.nodes:
+            for r in node.routes:
+                src = r.get("prefsrc")
+                if src:
+                    ip2name[src] = node.nodename
+        for node in self.cfg.nodes:
             devs = defaultdict(set)
             for r in node.routes:
                 src = r.get("prefsrc")
-                ip2name[src] = node.nodename
                 if r.get("scope") == "link":
-                    print("###################",r)
                     dev = r.get("dev")
                     dst = r.get("dst")
                     if dev and dst and "/" in dst:
-                        print("===>", dev, "--", dst)
                         devs[dev].add(dst)
-            print(devs)
             for r in node.routes:
-                print("###################",r)
                 scope = r.get("scope")
                 dst = r.get("dst")
                 gw = r.get("gateway")
                 dev = r.get("dev")
                 if gw:
                     if dev in devs:
-                        print(devs[dev])
                         for net in devs[dev]:
                             if ip_address(gw) in ip_network(net):
                                 netgraph[net].add(ip2name.get(gw, gw))
-                                print("==> netgraph1", net, gw)
-
                     if dst:
-                        print("==> remote", dst, gw)
                         remotes[dst].add(ip2name.get(gw,gw))
                 else:
                     if dst  and scope == "link":
                         netgraph[dst].add(node.nodename)
-                        print("==> netgraph2", dst, node.nodename)
 
         g = graphviz.Graph()
         g.attr("node", shape="ellipse")
