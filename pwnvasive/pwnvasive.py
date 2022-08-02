@@ -628,6 +628,10 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     def do_pdb(self):
         pdb.set_trace()
 
+
+    def do_save(self, fname=None):
+        self.cfg.save(fname)
+
     ########## MANAGE COLLECTIONS AND MAPPINGS
 
     def do_ls(self, obj=None, selector=None):
