@@ -15,7 +15,7 @@ setup(
         "aiocmd",
         "graphviz",
         "bcrypt",
-    ]
+    ],
     license = 'GPLv2',
     # keywords = '',
 
