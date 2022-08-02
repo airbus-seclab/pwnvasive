@@ -901,11 +901,15 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                 if r.get("scope") == "link":
                     dev = r.get("dev")
                     dst = r.get("dst")
+                    if dst == "default":
+                        dst = "0.0.0.0/0"
                     if dev and dst and "/" in dst:
                         devs[dev].add(dst)
             for r in node.routes:
                 scope = r.get("scope")
                 dst = r.get("dst")
+                if dst == "default":
+                    dst = "0.0.0.0/0"
                 gw = r.get("gateway")
                 dev = r.get("dev")
                 if gw:
@@ -923,11 +927,11 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         g.attr("graph", layout="neato")
         g.attr("graph", overlap="scale")
 
-        g.attr("node", shape="ellipse", color="gray")
+        g.attr("node", shape="ellipse", fillcolor="lightgray", style="filled")
         for net in set(netgraph)|set(remotes):
             if "/" in net:
                 g.node(net)
-        g.attr("node", shape="box")
+        g.attr("node", shape="box", fillcolor="#eeee33", style="filled")
         for node in {n for ns in netgraph.values() for n in ns}:
                 g.node(node)
         g.attr("edge", style="solid")
