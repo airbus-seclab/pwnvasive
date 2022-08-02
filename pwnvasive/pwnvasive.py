@@ -45,7 +45,9 @@ class JSONEnc(json.JSONEncoder):
             return o.__json__()
         return json.JSONEncoder.default(self, o)
 
-class NoCredsFound(Exception):
+class PwnvasiveException(Exception):
+    pass
+class NoCredsFound(PwnvasiveException):
     def __str__(self):
         return f"{self.__class__.__name__}: no creds found for {self.args[0]}"
 
