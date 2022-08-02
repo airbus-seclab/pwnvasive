@@ -595,7 +595,7 @@ class Config(object):
             fname = self.fname
         self.config["state"].update(self.objects)
         with open(fname+".tmp", "w") as f:
-            json.dump(self.config, f, cls=JSONEnc)
+            json.dump(self.config, f, indent=4, cls=JSONEnc)
         os.rename(fname+".tmp", fname) # overwrite file only if json dump completed
 
 
