@@ -51,6 +51,8 @@ class NoCredsFound(PwnvasiveException):
     def __str__(self):
         return f"{self.__class__.__name__}: no creds found for {self.args[0]}"
 
+class OSNotIdentified(PwnvasiveException):
+    pass
 
 class OS(object):
     def __init__(self, node):
@@ -452,14 +454,14 @@ class Node(Mapping):
     @ensure(States.CONNECTED)
     async def ensure_IDENTIFIED(self):
         r = await self.session.run("uname -o")
-        if r.stdout.startswith("Linux"):
+        if "linux" in r.stdout.lower():
             self.os = Linux(self)
             self.values["os"] = "linux"
             self.state = States.IDENTIFIED
             self.values["hostname"] = await self.os.get_hostname()
             return True
         else:
-            return False
+            raise OSNotIdentified(f"Could not recognize os [{r.stdout.strip()}]")
 
 
 
