@@ -427,11 +427,12 @@ class Node(Mapping):
     @ensure(States.REACHED)
     async def ensure_CONNECTED(self):
         if not self.working_credentials:
+            c0 = [{"username":l.login} for l in self.config.logins]
             c1 = [{"username":l.login, "password":p.password}
                   for l in self.config.logins for p in self.config.passwords]
             c2 = [{"username":l.login, "client_keys": s.sshkey}
                   for l in self.config.logins for s in self.config.sshkeys if s._sshkey]
-            creds = (c for c in c1+c2 if c not in self.tested_credentials)
+            creds = (c for c in c0+c1+c2 if c not in self.tested_credentials)
             res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
 
             self.tested_credentials.extend([cred for cred,r,_ in res if not r])
