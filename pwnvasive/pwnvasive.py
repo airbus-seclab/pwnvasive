@@ -266,6 +266,8 @@ class Mapping(object, metaclass=MappingMeta):
     def __json__(self):
         return self.to_json()
     def __repr__(self):
+        return self.summary()
+    def summary(self, include=None, exclude=[], other=[]):
         def fmtval(v):
             if type(v) is list:
                 return [fmtval(x) for x in v]
@@ -275,8 +277,9 @@ class Mapping(object, metaclass=MappingMeta):
             if len(v) > 20:
                 v = f"{v[:5]}...({len(v)})...{v[-5:]}"
             return v
-        r = ", ".join(f"{k}={fmtval(v)}" for k,v in self.values.items() if v is not None)
-        return f"<{r}>"
+        r = ", ".join(f"{k}={fmtval(v)}" for k,v in self.values.items()
+                      if v is not None and k not in exclude and (include is None or k in include))
+        return "<%s>" % (" ".join([r]+other))
 
 
 
@@ -349,6 +352,8 @@ class LinuxFiles(Mapping):
     _fields = {
         "path": ("", str),
     }
+    def __repr__(self):
+        return f"<path={self.path}>"
 
 class Node(Mapping):
     _key = ("ip", "port")
@@ -372,6 +377,14 @@ class Node(Mapping):
         self.session = None
         if self.values.get("os") == "linux":
             self.os = Linux(self)
+
+    def __repr__(self):
+        other =[]
+        username = self.working_credentials[0].get("username") if self.working_credentials else None
+        if username:
+            other.append(f"username={username}")
+        other.append(f"files={len(self.files)}")
+        return self.summary(exclude=["files", "routes", "tested_credentials", "working_credentials"], other=other)
     @property
     def nodename(self):
         return self.hostname or self.ip
