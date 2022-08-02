@@ -920,7 +920,10 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                         netgraph[dst].add(node.nodename)
 
         g = graphviz.Graph()
-        g.attr("node", shape="ellipse")
+        g.attr("graph", layout="neato")
+        g.attr("graph", overlap="scale")
+
+        g.attr("node", shape="ellipse", color="gray")
         for net in set(netgraph)|set(remotes):
             if "/" in net:
                 g.node(net)
@@ -937,10 +940,10 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             for node in nodes:
                 g.edge(net,node)
 
+
+
         print(g.source)
-        print(remotes)
-        print(netgraph)
-        g.render(engine="fdp", view=True)
+        g.render(view=True)
 
 def main(args=None):
     parser = argparse.ArgumentParser()
