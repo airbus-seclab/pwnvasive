@@ -134,42 +134,35 @@ class Collection(object):
         return list(self.coll.values())
     def __json__(self):
         return self.to_json()
-    def __contains__(self, obj):
-        return obj.key in self.coll
     def __len__(self):
         return len(self.coll)
+    def _selector_to_key(self, selector):
+        if isinstance(selector, Mapping):
+            return selector.key
+        else:
+            try:
+                selector = int(selector)
+            except:
+                pass
+            else:
+                try:
+                    o = next(islice(self.coll.values(), selector, None))
+                    return o.key
+                except StopIteration:
+                    raise KeyError(selector)
+            if type(selector) is str:
+                return self.mapping.str2key(selector)
+    def __contains__(self, selector):
+        try:
+            key = self._selector_to_key(selector)
+        except KeyError:
+            return False
+        return key in self.coll
     def __getitem__(self, selector):
-        if isinstance(selector, Mapping):
-            self.coll[selector.key]
-        else:
-            try:
-                selector = int(selector)
-            except:
-                pass
-            else:
-                try:
-                    return next(islice(self.coll.values(), selector, None))
-                except StopIteration:
-                    raise KeyError(selector)
-            if type(selector) is str:
-                selector = self.mapping.str2key(selector)
-            return self.coll[selector]
+        key = self._selector_to_key(selector)
+        return self.coll[key]
     def __delitem__(self, selector):
-        if isinstance(selector, Mapping):
-            key = selector.key
-        else:
-            try:
-                selector = int(selector)
-            except:
-                pass
-            else:
-                try:
-                    selector = next(islice(self.coll.values(), selector, None))
-                    key = selector.key
-                except StopIteration:
-                    raise KeyError(selector)
-            if type(selector) is str:
-                key = self.mapping.str2key(selector)
+        key = self._selector_to_key(selector)
         del(self.coll[key])
 
     def select(self, selector=None):
