@@ -356,7 +356,7 @@ class Node(Mapping):
         "controlled":          (False, bool),
         "hostname":            (None, str),
         "reachable":           (False, bool),
-        "jump_host":           (None, tuple),
+        "jump_host":           (None, str),
         "routes":              ([], list),
         "tested_credentials":  ([], list),
         "working_credentials": ([], list),
@@ -410,9 +410,25 @@ class Node(Mapping):
 
     @skip_if(States.REACHED)
     async def ensure_REACHED(self):
-        if self.jump_host is not None:
-            raise NotImplementedError("Jump host connectivity test")
-        await asyncio.open_connection(self.ip, self.port)
+        if self.jump_host is None:
+            try:
+                r,w=await asyncio.open_connection(self.ip, self.port)
+            except OSError as e:
+                if e.errno == 111:
+                    raise Exception(f"Cannot connect to {self.shortname}")
+                raise
+            w.close()
+        else:
+            try:
+                jh = self.config.nodes[self.jump_host]
+            except KeyError:
+                raise Exception(f"Jump host not found in node list: {self.jump_host}")
+            jhs = await jh.connect()
+            try:
+                c,s = await jhs.create_connection(asyncssh.SSHTCPSession, self.ip,self.port)
+            except asyncssh.ChannelOpenError:
+                raise Exception(f"Cannot connect to {self.shortname} from {jh.shortname}")
+            c.close()
         self.state = States.REACHED
         self.values["reachable"] = True
         return True
@@ -423,8 +439,12 @@ class Node(Mapping):
         if ck:
             use_creds["client_keys"] = asyncssh.import_private_key(ck)
         opt = asyncssh.SSHClientConnectionOptions(**use_creds, known_hosts=None)
+        if self.jump_host:
+            jh = await self.config.nodes[self.jump_host].connect()
+        else:
+            jh = None
         try:
-            sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt)
+            sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt, tunnel=jh)
         except Exception as e:
             return creds,False,None
         return creds,True,sess
