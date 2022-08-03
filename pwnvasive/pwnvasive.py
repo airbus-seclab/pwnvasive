@@ -773,7 +773,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             try:
                 sout,serr = await node.run(cmd)
             except Exception as e:
-                print(f"-----[{node.shortname}]-----")
+                print(f"-----[{node.shortname}]-----[ERROR]-----")
                 print(e)
             else:
                 print(f"-----[{node.shortname}]-----")
