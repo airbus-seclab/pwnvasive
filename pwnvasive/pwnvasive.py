@@ -79,7 +79,7 @@ class Linux(OS):
         r = await self.run("ip route show")
         routes = []
         synonyms = { "via":"gateway", "src":"prefsrc"}
-        flagnames = ["linkdown"]
+        flagnames = ["linkdown", "onlink"]
         for l  in r.splitlines():
             flags = []
             route = {"flags":flags}
