@@ -96,6 +96,18 @@ class Linux(OS):
             routes.append(route)
         return routes
 
+    re_arpcache = re.compile("\(([0-9.]+)\) at ([0-9a-fA-F:]+) .* on ([0-9a-zA-Z]+)")
+    async def get_arp_cache(self):
+        out = await self.run("arp -an")
+        print(out)
+        cache = {}
+        for l in out.splitlines():
+            m = self.re_arpcache.search(l)
+            if m:
+                ip,mac,iff = m.groups()
+                cache[ip] = [mac,iff]
+        return cache
+
     async def get_all(self):
         keys = ["hostname", "os", "uid"]
         vals = await asyncio.gather(*[getattr(self, f"get_{k}")() for k in keys])
@@ -358,6 +370,7 @@ class Node(Mapping):
         "reachable":           (False, bool),
         "jump_host":           (None, str),
         "routes":              ([], list),
+        "arp_cache":           ({}, dict),
         "tested_credentials":  ([], list),
         "working_credentials": ([], list),
         "os":                  (None, str),
@@ -572,6 +585,13 @@ class Node(Mapping):
         routes = await self.os.get_routes()
         self.values["routes"] = routes
         return routes
+
+    @ensure(States.IDENTIFIED)
+    async def collect_arp_cache(self):
+        cache = await self.os.get_arp_cache()
+        self.values["arp_cache"] = cache
+        return cache
+
 
 
 
@@ -851,6 +871,17 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         print(f"{node.shortname}: retrieved {len(routes)} routes")
 
 
+    async def do_collect_arp_cache(self, selector):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            t = asyncio.create_task(node.collect_arp_cache())
+            t.add_done_callback(lambda ctx: self.cb_collect_arp_cache(node, ctx))
+
+    def cb_collect_arp_cache(self, node, t):
+        cache = t.result()
+        print(f"{node.shortname}: retrieved {len(cache)} cache entries")
+
+
 
     ########## EXTRACT
     re_key = re.compile(b"(-----BEGIN ([A-Z0-9 _]*?)PRIVATE KEY-----.*?\n-----END \\2PRIVATE KEY-----)",
@@ -885,6 +916,9 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         extnets = []
         extnodes = []
         for node in nodes:
+            # Extract from arp cache
+            for e in node.arp_cache:
+                extnodes.append(Node(config=self.cfg, ip=e))
             # Extract from routes
             for r in node.routes:
                 dst = r.get("dst")
