@@ -663,7 +663,11 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     def str2map(self, s):
-        return { k.strip():v.strip() for k,v in [x.strip().split("=",1) for x in s.split(" ")] }
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            return { k.strip():v.strip()
+                     for k,v in [x.strip().split("=",1) for x in s.split(" ")] }
 
 
     ########## DEBUG
