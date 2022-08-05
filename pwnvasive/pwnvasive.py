@@ -670,6 +670,10 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                      for k,v in [x.strip().split("=",1) for x in s.split(" ")] }
 
 
+    def do_save(self, fname=None):
+        self.cfg.save(fname)
+
+
     ########## DEBUG
 
     def do_eval(self, cmd):
@@ -679,8 +683,6 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         pdb.set_trace()
 
 
-    def do_save(self, fname=None):
-        self.cfg.save(fname)
 
     ########## MANAGE COLLECTIONS AND MAPPINGS
 
