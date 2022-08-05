@@ -133,8 +133,9 @@ class Linux(OS):
 
 
 class Collection(object):
-    def __init__(self, mapping, lst=None):
+    def __init__(self, store, mapping, lst=None):
         self.mapping = mapping
+        self.store = store
         if lst is None:
             lst = []
         keys = [x.key for x in lst]
@@ -175,7 +176,8 @@ class Collection(object):
         return self.coll[key]
     def __delitem__(self, selector):
         key = self._selector_to_key(selector)
-        del(self.coll[key])
+        obj = self.coll.pop(key)
+        self.store.notify(EventDelete(obj))
 
     def select(self, selector=None):
         if selector in [None, "all", "*"]:
@@ -194,11 +196,13 @@ class Collection(object):
         if obj in self:
             raise KeyError(f"Object already present")
         self.coll[obj.key] = obj
+        self.store.notify(EventCreate(obj))
     def add_batch(self, lst):
         n = 0
         for o in lst:
             if o not in self:
                 self.coll[o.key] = o
+                self.store.notify(EventCreate(o))
                 n += 1
         return n
     def update(self, oldobj, newobj):
@@ -207,6 +211,7 @@ class Collection(object):
         old = self.pop(oldobj)
         old.update(newobj)
         self[newobj] = newobj
+        self.store.notify(EventUpdate(newobj))
 
     def rehash(self):
         self.coll = OrderedDict([(x.key,x) for x in self.coll.values()])
@@ -595,6 +600,27 @@ class Node(Mapping):
 
 
 
+
+# Hierarchy of events
+class Event(object):
+    def __init__(self, obj):
+        self.obj = obj
+    def __repr__(self):
+        return f"<{self.__class__.__name__}({self.obj})>"
+
+class EventNewContent(Event):
+    pass
+
+class EventCreate(EventNewContent):
+    pass
+
+class EventUpdate(EventNewContent):
+    pass
+
+class EventDelete(Event):
+    pass
+
+
 DEFAULT_CONFIG = {
     "meta": { "version": "0.1", },
     "state": {
@@ -611,6 +637,8 @@ class Config(object):
         "linuxfiles": LinuxFiles,
     }
     def __init__(self, fname=None, json_=None):
+        self.eventq = asyncio.Queue()
+        self.callbacks = defaultdict(lambda : defaultdict(set))
         self.fname = fname
         if json_ is not None:
             j = json_
@@ -623,7 +651,9 @@ class Config(object):
         s = self.config["state"]
         self.objects = {}
         for f,c in self._objects.items():
-            self.objects[f] = Collection(c, [c.from_json(d, config=self) for d in  s.get(f,[])])
+            self.objects[f] = Collection(self, c, [c.from_json(d, config=self)
+                                                   for d in  s.get(f,[])])
+        self.dispatcher_task = asyncio.create_task(self.event_dispatcher())
 
     def __getattr__(self, attr):
         if attr in self.objects:
@@ -644,6 +674,27 @@ class Config(object):
             json.dump(self.config, f, indent=4, cls=JSONEnc)
         os.rename(fname+".tmp", fname) # overwrite file only if json dump completed
 
+
+    def register_callback(self, events, mappings, cb):
+        for event in events:
+            for mapping in mappings:
+                self.callbacks[event][mapping].add(cb)
+
+    def unregister_callback(self, events, mappings, cb):
+        for event in events:
+            for mapping in mappings:
+                self.callbacks[event][mapping].discard(cb)
+
+    def notify(self, event):
+        self.eventq.put_nowait(event)
+
+    async def event_dispatcher(self):
+        while True:
+            event = await self.eventq.get()
+            for eventclass in event.__class__.mro():
+                for objclass in event.obj.__class__.mro():
+                    for cb in self.callbacks[eventclass][objclass]:
+                        t = asyncio.create_task(cb(event))
 
 class Link(object):
     async def __init__(self, node):
@@ -682,6 +733,17 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     def do_pdb(self):
         pdb.set_trace()
 
+
+    def do_event_monitor(self, onoff):
+        if onoff.lower() in ["on", "1", "true", "ok"]:
+            self.cfg.register_callback([Event], [Mapping], self.event_monitor)
+        elif onoff.lower() in ["off", "0", "false", "ko"]:
+            self.cfg.unregister_callback([Event], [Mapping], self.event_monitor)
+        else:
+            print("ERROR: syntax: event_monitor {on|off}")
+
+    async def event_monitor(self, event):
+        print(f"MONITOR: {event}")
 
 
     ########## MANAGE COLLECTIONS AND MAPPINGS
@@ -1015,7 +1077,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         print(g.source)
         g.render(view=True)
 
-def main(args=None):
+async def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("database")
 
@@ -1023,7 +1085,7 @@ def main(args=None):
 
     try:
         with Config(options.database) as options.config:
-            asyncio.run(PwnCLI(options).run())
+            await PwnCLI(options).run()
     except Exception as e:
         print(f"ERROR: {e}")
         print("You can still recover data from options.config.nodes, etc.")
@@ -1032,4 +1094,4 @@ def main(args=None):
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
