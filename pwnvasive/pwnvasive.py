@@ -395,7 +395,7 @@ class Node(Mapping):
         if username:
             other.append(f"username={username}")
         other.append(f"files={len(self.files)}")
-        return self.summary(exclude=["files", "routes", "tested_credentials", "working_credentials"], other=other)
+        return self.summary(exclude=["files", "routes", "arp_cache", "tested_credentials", "working_credentials"], other=other)
     @property
     def nodename(self):
         return self.hostname or self.ip
