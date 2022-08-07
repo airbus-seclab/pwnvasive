@@ -620,6 +620,27 @@ class EventCreate(EventNewContent):
 class EventUpdate(EventNewContent):
     pass
 
+class EventNodeReached(EventUpdate):
+    pass
+
+class EventNodeConnected(EventUpdate):
+    pass
+
+class EventNodeIdentified(EventUpdate):
+    pass
+
+class EventNodeNewData(EventUpdate):
+    pass
+
+class EventNodeARPCache(EventNodeNewData):
+    pass
+
+class EventNodeRoute(EventNodeNewData):
+    pass
+
+class EventNodeFile(EventNodeNewData):
+    pass
+
 class EventDelete(Event):
     pass
 
