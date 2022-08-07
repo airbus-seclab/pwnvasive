@@ -346,6 +346,7 @@ class SSHKeys(Mapping):
         # store decrypted key ; use pkcs1-pem for determinism
         self.values["sshkey"] = self._sshkey.export_private_key(format_name="pkcs1-pem").decode("ascii")
         self.config.sshkeys.rehash()
+        self.config.notify(EventUpdate(self))
         return True
 
     def __repr__(self):
@@ -448,7 +449,9 @@ class Node(Mapping):
                 raise Exception(f"Cannot connect to {self.shortname} from {jh.shortname}")
             c.close()
         self.state = States.REACHED
-        self.values["reachable"] = True
+        if not self.reachable:
+            self.values["reachable"] = True
+            self.config.notify(EventNodeReached(self))
         return True
 
     async def _test_creds(self, **creds):
@@ -486,6 +489,7 @@ class Node(Mapping):
                     if r:
                         self.session = sess
                         break
+                self.config.notify(EventNodeConnected(self))
             else:
                 raise NoCredsFound(self.shortname)
             return None
@@ -498,21 +502,27 @@ class Node(Mapping):
     @skip_if(States.IDENTIFIED)
     @ensure(States.CONNECTED)
     async def ensure_IDENTIFIED(self):
-        r = await self.session.run("uname -o")
-        if "linux" in r.stdout.lower():
-            self.os = Linux(self)
-            self.values["os"] = "linux"
-            self.state = States.IDENTIFIED
-            self.values["hostname"] = await self.os.get_hostname()
-            return True
-        else:
-            raise OSNotIdentified(f"Could not recognize os [{r.stdout.strip()}]")
-
+        if self.os is None:
+            r = await self.session.run("uname -o")
+            if "linux" in r.stdout.lower():
+                self.os = Linux(self)
+                self.values["os"] = "linux"
+                self.state = States.IDENTIFIED
+                self.values["hostname"] = await self.os.get_hostname()
+                self.config.notify(EventNodeIdentified(self))
+                return True
+            else:
+                raise OSNotIdentified(f"Could not recognize os [{r.stdout.strip()}]")
 
 
 
     def remember_file(self, path, content):
-        self.files[path] = base64.b85encode(zlib.compress(content)).decode("ascii")
+        c = base64.b85encode(zlib.compress(content)).decode("ascii")
+        if path in self.files:
+            if self.files[path] == c:
+                return
+        self.files[path] = c
+        self.config.notify(EventNodeFile(self, path=path))
 
     def recall_file(self, path):
         c = self.files[path]
@@ -589,12 +599,14 @@ class Node(Mapping):
     async def collect_routes(self):
         routes = await self.os.get_routes()
         self.values["routes"] = routes
+        self.config.notify(EventNodeRoute(self))
         return routes
 
     @ensure(States.IDENTIFIED)
     async def collect_arp_cache(self):
         cache = await self.os.get_arp_cache()
         self.values["arp_cache"] = cache
+        self.config.notify(EventNodeARPCache(self))
         return cache
 
 
