@@ -603,10 +603,13 @@ class Node(Mapping):
 
 # Hierarchy of events
 class Event(object):
-    def __init__(self, obj):
+    def __init__(self, obj, **kargs):
         self.obj = obj
+        self._details = kargs
+    def __getattr__(self, attr):
+        return self._details[attr]
     def __repr__(self):
-        return f"<{self.__class__.__name__}({self.obj})>"
+        return f"<{self.__class__.__name__}({self.obj.shortname})>"
 
 class EventNewContent(Event):
     pass
