@@ -300,12 +300,12 @@ class Net(Mapping):
         "scanned": (False, bool),
     }
 
-class Logins(Mapping):
+class Login(Mapping):
     _fields = {
         "login": (None, str),
     }
 
-class Passwords(Mapping):
+class Password(Mapping):
     _fields = {
         "password": (None, str),
     }
@@ -359,7 +359,7 @@ class SSHKeys(Mapping):
             h = c = a = "(-)"
         return f"<{dec} ssh key: {a} {h} {c} {self.origin}>"
 
-class LinuxFiles(Mapping):
+class LinuxFile(Mapping):
     _fields = {
         "path": ("", str),
     }
@@ -667,10 +667,10 @@ class Config(object):
     _objects = {
         "networks": Net,
         "nodes": Node,
-        "logins": Logins,
-        "passwords": Passwords,
+        "logins": Login,
+        "passwords": Password,
         "sshkeys": SSHKeys,
-        "linuxfiles": LinuxFiles,
+        "linuxfiles": LinuxFile,
     }
     def __init__(self, fname=None, json_=None):
         self.eventq = asyncio.Queue()
