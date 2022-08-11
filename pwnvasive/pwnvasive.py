@@ -60,7 +60,7 @@ class OS(object):
 
 class Linux(OS):
     @property
-    def file_list(self):
+    def filename_collection(self):
         return self.node.config.linuxfiles
 
     async def run(self, cmd):
@@ -579,8 +579,10 @@ class Node(Mapping):
 
 
     @ensure(States.IDENTIFIED)
-    async def collect_files(self):
-        lst = [f.path for f in self.os.file_list]
+    async def collect_files(self, lst=None):
+        if lst is None:
+            fname_coll = await self.get_filename_collection()
+            lst = [f.path for f in fname_coll]
         return await self.mget(*lst)
 
     @ensure(States.IDENTIFIED)
@@ -589,7 +591,7 @@ class Node(Mapping):
 
     @ensure(States.IDENTIFIED)
     async def collect_filenames(self):
-        return await self.os.collect_filenames()
+        return await self._os.collect_filenames()
 
     @ensure(States.IDENTIFIED)
     async def collect_infos(self):
