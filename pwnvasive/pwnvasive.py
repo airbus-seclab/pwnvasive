@@ -311,6 +311,9 @@ class SSHKey(Mapping):
             pass
         if self._sshkey is None:
             self.find_passphrase()
+    @property
+    def shortname(self):
+        return repr(self)[1:-1]
 
     def test_key_passphrase(self, pwd):
         try:
