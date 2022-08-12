@@ -87,7 +87,6 @@ class Linux(OS):
     re_arpcache = re.compile("\(([0-9.]+)\) at ([0-9a-fA-F:]+) .* on ([0-9a-zA-Z]+)")
     async def get_arp_cache(self):
         out = await self.run("arp -an")
-        print(out)
         cache = {}
         for l in out.splitlines():
             m = self.re_arpcache.search(l)
