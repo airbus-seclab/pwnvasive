@@ -310,7 +310,7 @@ class Password(Mapping):
         "password": (None, str),
     }
 
-class SSHKeys(Mapping):
+class SSHKey(Mapping):
     _fields = {
         "sshkey": (None, str),
         "origin": (None, str),
@@ -671,7 +671,7 @@ class Config(object):
         "nodes": Node,
         "logins": Login,
         "passwords": Password,
-        "sshkeys": SSHKeys,
+        "sshkeys": SSHKey,
         "linuxfiles": LinuxFile,
     }
     def __init__(self, fname=None, json_=None):
@@ -1002,7 +1002,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                         k = k.decode("ascii")
                     except:
                         continue
-                    key = SSHKeys(config=self.cfg, sshkey=k, origin=f"{node.shortname}:{pth}")
+                    key = SSHKey(config=self.cfg, sshkey=k, origin=f"{node.shortname}:{pth}")
                     keys.append(key)
         n = self.cfg.sshkeys.add_batch(keys)
         print(f"{n} new potential ssh keys discovered")
