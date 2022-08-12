@@ -713,6 +713,209 @@ class Config(object):
                     for cb in self.callbacks[eventclass][objclass]:
                         t = asyncio.create_task(cb(event))
 
+class Operations(object):
+    def __init__(self, store):
+        self.store = store
+    async def collect_logins(self, node):
+        logins = await node.collect_logins()
+        olog = [self.store.logins.mapping(config=self.store, login=l) for l in logins]
+        nlog = self.store.logins.add_batch(olog)
+        opwd = [self.store.passwords.mapping(config=self.store, password=l) for l in logins]
+        npwd = self.store.passwords.add_batch(opwd)
+        return logins,nlog,npwd
+    async def collect_routes(self, node):
+        return await node.collect_routes()
+    async def collect_files(self, node):
+        return await node.collect_files()
+    async def collect_arp_cache(self, node):
+        return await node.collect_arp_cache()
+    async def collect_filenames(self, node):
+        fnames = await node.collect_filenames()
+        coll = await node.get_filename_collection()
+        fnameobjects = [coll.mapping(config=self.store, path=p) for p in fnames]
+        newfilesnb = coll.add_batch(fnameobjects)
+        return len(fnames), newfilesnb
+    def inspect_arp_cache(self, node):
+        extnodes = []
+        for ip in node.arp_cache:
+            extnodes.append(Node(config=self.store, ip=ip)) # XXX jump_host=node.key ?
+        nnodes = self.store.nodes.add_batch(extnodes)
+        return nnodes
+    def inspect_routes(self, node):
+        extnodes = []
+        extnets = []
+        for r in node.routes:
+            dst = r.get("dst")
+            if dst and dst != "default":
+                extnets.append(Net(config=self.store, cidr=dst))
+                gw = r.get("gateway")
+                if gw:
+                    extnodes.append(Node(config=self.store, ip=gw))
+        nnodes = self.store.nodes.add_batch(extnodes)
+        nnets = self.store.networks.add_batch(extnets)
+        return nnodes,nnets
+
+
+    _re_key = re.compile(b"(-----BEGIN ([A-Z0-9 _]*?)PRIVATE KEY-----.*?\n-----END \\2PRIVATE KEY-----)",
+                         re.DOTALL)
+    def _find_ssh_keys(self, c, origin=None):
+        keys = []
+        for k,_ in self._re_key.findall(c):
+            try:
+                k = k.decode("ascii")
+            except:
+                continue
+            key = SSHKey(config=self.store, sshkey=k, origin=origin)
+            keys.append(key)
+        return keys
+
+    def extract_ssh_keys_from_content(self, c, origin=None):
+        keys = self._find_ssh_keys(c, origin = origin)
+        n = self.store.sshkeys.add_batch(keys)
+        return len(keys),n
+
+    def extract_ssh_keys_from_node(self, node):
+        keys = []
+        for pth,c in node.iter_files():
+            keys += self._find_ssh_keys(c, origin=f"{node.shortname}:{pth}")
+        n = self.store.sshkeys.add_batch(keys)
+        return len(keys),n
+
+    def extract_ssh_keys_from_nodes(self, selector):
+        keys = []
+        nodes = self.store.nodes.select(selector)
+        for node in nodes:
+            for pth,c in node.iter_files():
+                keys += self._find_ssh_keys(c, origin=f"{node.shortname}:{pth}")
+        n = self.store.sshkeys.add_batch(keys)
+        return len(keys),n
+
+    def decrypt_ssh_keys(self, selector=None):
+        keys = self.store.sshkeys.select(selector)
+        n = 0
+        for k in keys:
+            if k._sshkey is None:
+                if k.find_passphrase():
+                    n += 1
+        return n
+
+class HandlerRegistry(object):
+    callbacks = {}
+    @classmethod
+    def register(cls, *events_mappings):
+        def g(f):
+            cls.callbacks[f.__name__] = f
+            h = HandlerDescriptor(f, events_mappings)
+            return h
+        return g
+    @classmethod
+    def list(cls):
+        return list(cls.callbacks)
+    def __init__(self, store, operations):
+        self.store = store
+        self.op = operations
+        self.state = defaultdict(bool)
+        self._trace_callback = None
+
+    def activate(self, name=None):
+        cbs = [name] if name else self.list()
+        for cb in cbs:
+            getattr(self, cb).activate()
+    def deactivate(self, name):
+        cbs = [name] if name else self.list()
+        for cb in cbs:
+            getattr(self, cb).deactivate()
+    def iter_states(self):
+        for hname,h in self.callbacks.items():
+            yield hname, self.state[h]
+
+    def start_trace(self, callback):
+        self._trace_callback = callback
+    def stop_trace(self):
+        self._trace_callback = None
+
+    def trace(self, handler, args, kargs):
+        if self._trace_callback:
+            self._trace_callback(handler, args, kargs)
+
+
+class HandlerDescriptor(object):
+    def __init__(self, handler, events_mappings):
+        self.handler = handler
+        self.events_mappings = events_mappings
+    def __get__(self, instance, cls):
+        return Handler(instance, self.handler, self.events_mappings)
+
+class Handler(object):
+    def __init__(self, instance, handler, events_mappings):
+        self.instance = instance
+        self.handler = handler
+        self.events_mappings = events_mappings
+    def __call__(self, *args, **kargs):
+        self.instance.trace(self, args, kargs)
+        return self.handler(self.instance, *args, **kargs)
+    def __eq__(self, other):
+        return self.instance == other.instance and self.handler == other.handler
+    def __hash__(self):
+        return hash((self.instance, self.handler))
+    def __repr__(self):
+        return f"<Event handler for {self.handler.__name__}>"
+    def activate(self):
+        for events,mappings in self.events_mappings:
+            self.instance.store.register_callback(events, mappings, self)
+        self.instance.state[self.handler] = True
+    def deactivate(self):
+        for events,mappings in self.events_mappings:
+            self.instance.store.unregister_callback(events, mappings, self)
+        self.instance.state[self.handler] = False
+
+class Handlers(HandlerRegistry):
+
+    @HandlerRegistry.register(([EventNodeIdentified],[Node]))
+    async def collect_logins(self, event):
+        await self.op.collect_logins(event.obj)
+
+    @HandlerRegistry.register(([EventNodeIdentified],[Node]))
+    async def collect_routes(self, event):
+        await self.op.collect_routes(event.obj)
+
+    @HandlerRegistry.register(([EventNodeIdentified],[Node]))
+    async def collect_filenames(self, event):
+        await self.op.collect_filenames(event.obj)
+
+    @HandlerRegistry.register(([EventCreate],[LinuxFile]))
+    async def collect_files(self, event):
+        await asyncio.gather(*[node.get(event.obj.path) for node in self.store.nodes],
+                             return_exceptions=True)
+
+    @HandlerRegistry.register(([EventNodeIdentified],[Node]))
+    async def collect_arp_cache(self, event):
+        await self.op.collect_arp_cache(event.obj)
+
+    @HandlerRegistry.register(([EventNodeARPCache],[Node]))
+    async def inspect_arp_cache(self, event):
+        self.op.inspect_arp_cache(event.obj)
+
+    @HandlerRegistry.register(([EventNodeARPCache],[Node]))
+    async def inspect_routes(self, event):
+        self.op.inspect_routes(event.obj)
+
+    @HandlerRegistry.register(([EventNodeFile],[Node]))
+    async def extract_ssh_keys(self, event):
+        c = event.obj.recall_file(event.path)
+        self.op.extract_ssh_keys_from_content(c)
+
+    @HandlerRegistry.register(([EventCreate],[SSHKey]))
+    async def decrypt_ssh_keys(self, event):
+        self.op.decrypt_ssh_keys(event.obj)
+
+    @HandlerRegistry.register(([EventCreate,EventNodeConnected],[Node]))
+    async def identify_node(self, event):
+        try:
+            await event.obj.identify()
+        except NoCredsFound:
+            pass
+
 
 
 
@@ -721,6 +924,8 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         self.options = options
         self.cfg = options.config
         self.prompt = "pwnvasive > "
+        self.op = options.operations
+        self.handlers = Handlers(options.config, options.operations)
         super().__init__()
         self.sessions = []
 
@@ -737,6 +942,22 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         self.cfg.save(fname)
 
 
+    def do_auto(self, handler=None, on="on"):
+        if handler is None:
+            for h,s in self.handlers.iter_states():
+                print(f"{h:20} {s}")
+        else:
+            handlers = [handler] if handler != "*" else self.handlers.list()
+            for h in handlers:
+                if on.lower() in ["on", "1", "ok", "true"]:
+                    self.handlers.activate(h)
+                elif on.lower() in ["off", "0", "ko", "false"]:
+                    self.handlers.deactivate(h)
+
+
+    def _auto_completions(self):
+        return WordCompleter(self.handlers.list())
+
     ########## DEBUG
 
     def do_eval(self, cmd):
@@ -746,17 +967,29 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         pdb.set_trace()
 
 
-    def do_event_monitor(self, onoff):
-        if onoff.lower() in ["on", "1", "true", "ok"]:
-            self.cfg.register_callback([Event], [Mapping], self.event_monitor)
-        elif onoff.lower() in ["off", "0", "false", "ko"]:
-            self.cfg.unregister_callback([Event], [Mapping], self.event_monitor)
-        else:
+    def do_monitor(self, what, onoff="on"):
+        start = onoff.lower() in ["on", "1", "true", "ok"]
+        stop = onoff.lower() in ["off", "0", "false", "ko"]
+        if not (start ^ stop):
             print("ERROR: syntax: event_monitor {on|off}")
+            return
+        if what == "events":
+            if start:
+                self.cfg.register_callback([Event], [Mapping], self.event_monitor)
+            else:
+                self.cfg.unregister_callback([Event], [Mapping], self.event_monitor)
+        elif what == "handlers":
+            if start:
+                self.handlers.start_trace(self.handler_monitor)
+            else:
+                self.handlers.stop_trace()
+    def _monitor_completions(self):
+        return WordCompleter(["events", "handlers"])
 
     async def event_monitor(self, event):
         print(f"MONITOR: {event}")
-
+    def handler_monitor(self, handler, args, kargs):
+        print(f"HANDLER: {handler} called with {args} {kargs}")
 
     ########## MANAGE COLLECTIONS AND MAPPINGS
 
@@ -849,20 +1082,33 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         else:
             nodes = self.cfg.nodes.select(selector)
             for node in nodes:
-                print(f"connecting to {node}")
                 cnx = node.connect()
                 t = asyncio.create_task(cnx)
-                t.add_done_callback(self.cb_connected)
+                t.add_done_callback(lambda ctx:self.cb_connected(node, ctx))
 
-    def cb_connected(self, t):
+    def cb_connected(self, node, t):
         try:
             nsession = t.result()
-        except NoCredsFound as e:
+        except Exception as e:
             print(f"Connection failed: {e}")
         else:
             if nsession:
-                print(f"Connected to {nsession} (#{len(self.sessions)})")
-                self.sessions.append(nsession)
+                print(f"Connected to {node.shortname}")
+
+    async def do_id(self, selector=None):
+        nodes = self.cfg.nodes.select(selector)
+        for node in nodes:
+            cnx = node.identify()
+            t = asyncio.create_task(cnx)
+            t.add_done_callback(lambda ctx:self.cb_identified(node, ctx))
+
+    def cb_identified(self, node, t):
+        try:
+            t.result()
+        except Exception as e:
+            print(f"Connection failed: {e}")
+        else:
+            print(f"Identified {node.shortname}")
 
 
     ########## RUN
@@ -902,48 +1148,40 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     async def do_collect_logins(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.collect_logins())
+            t = asyncio.create_task(self.op.collect_logins(node))
             t.add_done_callback(lambda ctx: self.cb_collect_logins(node, ctx))
 
     def cb_collect_logins(self, node, t):
-        logins = t.result()
-        olog = [self.cfg.logins.mapping(config=self.cfg, login=l) for l in logins]
-        nlog = self.cfg.logins.add_batch(olog)
-        opwd = [self.cfg.passwords.mapping(config=self.cfg, password=l) for l in logins]
-        npwd = self.cfg.passwords.add_batch(opwd)
+        _logins,nlog,npwd = t.result()
         print(f"{node.shortname}: {nlog} new logins, {npwd} new passwords")
 
 
     async def do_collect_filenames(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.collect_filenames())
+            t = asyncio.create_task(self.op.collect_filenames(node))
             t.add_done_callback(lambda ctx:self.cb_collect_filenames(node, ctx))
 
     def cb_collect_filenames(self, node, t):
-        fnames = t.result()
-        coll = node.os.file_list
-        fnameobjects = [coll.mapping(config=self.cfg, path=p) for p in fnames]
-        newfilesnb = coll.add_batch(fnameobjects)
-        print(f"{node.shortname}: retrieved {len(fnames)} file names. {newfilesnb} were new.")
-
+        nbold,nbnew = t.result()
+        print(f"{node.shortname}: retrieved {nbold} file names. {nbnew} were new.")
 
 
     async def do_collect_files(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.collect_files())
+            t = asyncio.create_task(self.op.collect_files(node))
             t.add_done_callback(lambda ctx: self.cb_collect_files(node, ctx))
 
     def cb_collect_files(self, node, t):
-        files = t.result()
-        print(f"{node.shortname}: retrieved {len(files)} new files")
+        fnames = t.result()
+        print(f"{node.shortname}: retrieved {len(fnames)} new files")
 
 
     async def do_collect_routes(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.collect_routes())
+            t = asyncio.create_task(self.op.collect_routes())
             t.add_done_callback(lambda ctx: self.cb_collect_routes(node, ctx))
 
     def cb_collect_routes(self, node, t):
@@ -954,7 +1192,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     async def do_collect_arp_cache(self, selector):
         nodes = self.cfg.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(node.collect_arp_cache())
+            t = asyncio.create_task(self.op.collect_arp_cache())
             t.add_done_callback(lambda ctx: self.cb_collect_arp_cache(node, ctx))
 
     def cb_collect_arp_cache(self, node, t):
@@ -964,31 +1202,12 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     ########## EXTRACT
-    re_key = re.compile(b"(-----BEGIN ([A-Z0-9 _]*?)PRIVATE KEY-----.*?\n-----END \\2PRIVATE KEY-----)",
-                        re.DOTALL)
-    def do_extract_sshkeys(self, selector):
-        keys = []
-        nodes = self.cfg.nodes.select(selector)
-        for node in nodes:
-            for pth,c in node.iter_files():
-                for k,_ in self.re_key.findall(c):
-                    try:
-                        k = k.decode("ascii")
-                    except:
-                        continue
-                    key = SSHKey(config=self.cfg, sshkey=k, origin=f"{node.shortname}:{pth}")
-                    keys.append(key)
-        n = self.cfg.sshkeys.add_batch(keys)
-        print(f"{n} new potential ssh keys discovered")
+    def do_extract_ssh_keys(self, selector):
+        okeys,nkeys = self.op.extract_ssh_keys_from_nodes(selector)
+        print(f"{nkeys} new potential ssh keys discovered")
 
-    def do_decrypt_sshkeys(self, selector=None):
-        keys = self.cfg.sshkeys.select(selector)
-        n = 0
-        for k in keys:
-            if k._sshkey is None:
-                if k.find_passphrase():
-                    n += 1
-                    print(k)
+    def do_decrypt_ssh_keys(self, selector=None):
+        n = self.cfg.op.decrypt_ssh_keys(selector)
         print(f"Decrypted {n} ssh keys")
 
     def do_extract_networks(self, selector=None):
@@ -1018,8 +1237,8 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                     kh = asyncssh.import_known_hosts(c)
                     for h in kh._exact_entries.keys():
                         extnodes.append(Node(config=self.cfg, ip=h))
-        nnets = self.cfg.networks.add_batch(extnets)
-        nnodes = self.cfg.nodes.add_batch(extnodes)
+        nnets = self.store.networks.add_batch(extnets)
+        nnodes = self.store.nodes.add_batch(extnodes)
         print(f"Added {nnets} new networks and {nnodes} new nodes")
 
 
@@ -1084,8 +1303,6 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             for node in nodes:
                 g.edge(net,node)
 
-
-
         print(g.source)
         g.render(view=True)
 
@@ -1097,6 +1314,7 @@ async def main(args=None):
 
     try:
         with Config(options.database) as options.config:
+            options.operations = Operations(options.config)
             await PwnCLI(options).run()
     except Exception as e:
         print(f"ERROR: {e}")
