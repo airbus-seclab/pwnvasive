@@ -916,7 +916,10 @@ class Handlers(HandlerRegistry):
         except NoCredsFound:
             pass
 
-
+    @HandlerRegistry.register(([EventNewContent],[Login, Password, SSHKey]))
+    async def try_new_creds(self, event):
+        await asyncio.gather(*(node.connect() for node in self.store.nodes),
+                             return_exceptions=True)
 
 
 class PwnCLI(aiocmd.PromptToolkitCmd):
