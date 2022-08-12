@@ -49,7 +49,7 @@ class OS(object):
 class Linux(OS):
     @property
     def filename_collection(self):
-        return self.node.config.linuxfiles
+        return self.node.store.linuxfiles
 
     async def run(self, cmd):
         sout,serr = await self.node.run(cmd)
@@ -229,8 +229,8 @@ class Mapping(object, metaclass=MappingMeta):
     _fields = {}
     _key = None # tuple. If None, metaclass will use the first field of _field.
     _keytype = None # automatically computed from _key and _fields by metaclass
-    def __init__(self, config=None, **kargs):
-        self.config = config
+    def __init__(self, store=None, **kargs):
+        self.store = store
         self.values = {}
         for f,(v,_) in self._fields.items():
             if type(v) in [list, dict]:
@@ -256,8 +256,8 @@ class Mapping(object, metaclass=MappingMeta):
             if f in other:
                 self.values[f] = other[f]
     @classmethod
-    def from_json(cls, j, config=None):
-        return cls(config=config, **j)
+    def from_json(cls, j, store=None):
+        return cls(store=store, **j)
     def to_json(self):
         return self.values
     def __json__(self):
@@ -325,7 +325,7 @@ class SSHKey(Mapping):
 
     def find_passphrase(self, passwords=None):
         if passwords is None:
-            passwords = [p.password for p in self.config.passwords]
+            passwords = [p.password for p in self.store.passwords]
         for p in passwords:
             if self.test_key_passphrase(p):
                 found = p
@@ -335,8 +335,8 @@ class SSHKey(Mapping):
         self._sshkey = asyncssh.import_private_key(self.sshkey, found)
         # store decrypted key ; use pkcs1-pem for determinism
         self.values["sshkey"] = self._sshkey.export_private_key(format_name="pkcs1-pem").decode("ascii")
-        self.config.sshkeys.rehash()
-        self.config.notify(EventUpdate(self))
+        self.store.sshkeys.rehash()
+        self.store.notify(EventUpdate(self))
         return True
 
     def __repr__(self):
@@ -416,7 +416,7 @@ class Node(Mapping):
                     w.close()
                 else:
                     try:
-                        jh = self.config.nodes[self.jump_host]
+                        jh = self.store.nodes[self.jump_host]
                     except KeyError:
                         raise Exception(f"Jump host not found in node list: {self.jump_host}")
                     jhs = await jh.connect()
@@ -429,7 +429,7 @@ class Node(Mapping):
                     c.close()
                 self.values["reachable"] = self._reached
                 if self._reached:
-                    self.config.notify(EventNodeReached(self))
+                    self.store.notify(EventNodeReached(self))
             return self._reached
 
     async def _test_creds(self, **creds):
@@ -439,7 +439,7 @@ class Node(Mapping):
             use_creds["client_keys"] = asyncssh.import_private_key(ck)
         opt = asyncssh.SSHClientConnectionOptions(**use_creds, known_hosts=None)
         if self.jump_host:
-            jh = await self.config.nodes[self.jump_host].connect()
+            jh = await self.store.nodes[self.jump_host].connect()
         else:
             jh = None
         try:
@@ -456,11 +456,11 @@ class Node(Mapping):
         async with self._semaphore_session:
             if self._session is None:
                 if not self.working_credentials:
-                    c0 = [{"username":l.login} for l in self.config.logins]
+                    c0 = [{"username":l.login} for l in self.store.logins]
                     c1 = [{"username":l.login, "password":p.password}
-                          for l in self.config.logins for p in self.config.passwords]
+                          for l in self.store.logins for p in self.store.passwords]
                     c2 = [{"username":l.login, "client_keys": s.sshkey}
-                          for l in self.config.logins for s in self.config.sshkeys if s._sshkey]
+                          for l in self.store.logins for s in self.store.sshkeys if s._sshkey]
                     creds = (c for c in c0+c1+c2 if c not in self.tested_credentials)
                     res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
                     self.tested_credentials.extend([cred for cred,r,_ in res if not r])
@@ -471,7 +471,7 @@ class Node(Mapping):
                             if r:
                                 self._session = sess
                                 break
-                        self.config.notify(EventNodeConnected(self))
+                        self.store.notify(EventNodeConnected(self))
                     else:
                         self.values["controlled"] = False
                         raise NoCredsFound(self.shortname)
@@ -490,7 +490,7 @@ class Node(Mapping):
                     self._os = Linux(self)
                     self.values["os"] = "linux"
                     self.values["hostname"] = await self._os.get_hostname()
-                    self.config.notify(EventNodeIdentified(self))
+                    self.store.notify(EventNodeIdentified(self))
                 else:
                     raise OSNotIdentified(f"Could not recognize os [{r.stdout.strip()}]")
             return self._os
@@ -508,7 +508,7 @@ class Node(Mapping):
             if self.files[path] == c:
                 return
         self.files[path] = c
-        self.config.notify(EventNodeFile(self, path=path))
+        self.store.notify(EventNodeFile(self, path=path))
 
     def recall_file(self, path):
         c = self.files[path]
@@ -578,14 +578,14 @@ class Node(Mapping):
         os = await self.get_os()
         routes = await os.get_routes()
         self.values["routes"] = routes
-        self.config.notify(EventNodeRoute(self))
+        self.store.notify(EventNodeRoute(self))
         return routes
 
     async def collect_arp_cache(self):
         os = await self.get_os()
         cache = await os.get_arp_cache()
         self.values["arp_cache"] = cache
-        self.config.notify(EventNodeARPCache(self))
+        self.store.notify(EventNodeARPCache(self))
         return cache
 
     async def get_filename_collection(self):
@@ -644,7 +644,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-class Config(object):
+class Store(object):
     _objects = {
         "networks": Net,
         "nodes": Node,
@@ -668,7 +668,7 @@ class Config(object):
         s = self.config["state"]
         self.objects = {}
         for f,c in self._objects.items():
-            self.objects[f] = Collection(self, c, [c.from_json(d, config=self)
+            self.objects[f] = Collection(self, c, [c.from_json(d, store=self)
                                                    for d in  s.get(f,[])])
         self.dispatcher_task = asyncio.create_task(self.event_dispatcher())
 
@@ -718,9 +718,9 @@ class Operations(object):
         self.store = store
     async def collect_logins(self, node):
         logins = await node.collect_logins()
-        olog = [self.store.logins.mapping(config=self.store, login=l) for l in logins]
+        olog = [self.store.logins.mapping(store=self.store, login=l) for l in logins]
         nlog = self.store.logins.add_batch(olog)
-        opwd = [self.store.passwords.mapping(config=self.store, password=l) for l in logins]
+        opwd = [self.store.passwords.mapping(store=self.store, password=l) for l in logins]
         npwd = self.store.passwords.add_batch(opwd)
         return logins,nlog,npwd
     async def collect_routes(self, node):
@@ -732,13 +732,13 @@ class Operations(object):
     async def collect_filenames(self, node):
         fnames = await node.collect_filenames()
         coll = await node.get_filename_collection()
-        fnameobjects = [coll.mapping(config=self.store, path=p) for p in fnames]
+        fnameobjects = [coll.mapping(store=self.store, path=p) for p in fnames]
         newfilesnb = coll.add_batch(fnameobjects)
         return len(fnames), newfilesnb
     def inspect_arp_cache(self, node):
         extnodes = []
         for ip in node.arp_cache:
-            extnodes.append(Node(config=self.store, ip=ip)) # XXX jump_host=node.key ?
+            extnodes.append(Node(store=self.store, ip=ip)) # XXX jump_host=node.key ?
         nnodes = self.store.nodes.add_batch(extnodes)
         return nnodes
     def inspect_routes(self, node):
@@ -747,10 +747,10 @@ class Operations(object):
         for r in node.routes:
             dst = r.get("dst")
             if dst and dst != "default":
-                extnets.append(Net(config=self.store, cidr=dst))
+                extnets.append(Net(store=self.store, cidr=dst))
                 gw = r.get("gateway")
                 if gw:
-                    extnodes.append(Node(config=self.store, ip=gw))
+                    extnodes.append(Node(store=self.store, ip=gw))
         nnodes = self.store.nodes.add_batch(extnodes)
         nnets = self.store.networks.add_batch(extnets)
         return nnodes,nnets
@@ -765,7 +765,7 @@ class Operations(object):
                 k = k.decode("ascii")
             except:
                 continue
-            key = SSHKey(config=self.store, sshkey=k, origin=origin)
+            key = SSHKey(store=self.store, sshkey=k, origin=origin)
             keys.append(key)
         return keys
 
@@ -922,10 +922,10 @@ class Handlers(HandlerRegistry):
 class PwnCLI(aiocmd.PromptToolkitCmd):
     def __init__(self, options):
         self.options = options
-        self.cfg = options.config
+        self.store = options.store
         self.prompt = "pwnvasive > "
         self.op = options.operations
-        self.handlers = Handlers(options.config, options.operations)
+        self.handlers = Handlers(options.store, options.operations)
         super().__init__()
         self.sessions = []
 
@@ -939,7 +939,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     def do_save(self, fname=None):
-        self.cfg.save(fname)
+        self.store.save(fname)
 
 
     def do_auto(self, handler=None, on="on"):
@@ -975,9 +975,9 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             return
         if what == "events":
             if start:
-                self.cfg.register_callback([Event], [Mapping], self.event_monitor)
+                self.store.register_callback([Event], [Mapping], self.event_monitor)
             else:
-                self.cfg.unregister_callback([Event], [Mapping], self.event_monitor)
+                self.store.unregister_callback([Event], [Mapping], self.event_monitor)
         elif what == "handlers":
             if start:
                 self.handlers.start_trace(self.handler_monitor)
@@ -995,24 +995,24 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
     def do_ls(self, obj=None, selector=None):
         if obj is None:
-            print("\n".join(self.cfg.objects))
+            print("\n".join(self.store.objects))
         else:
             if selector is None:
-                print(self.cfg.objects[obj].string_menu())
+                print(self.store.objects[obj].string_menu())
             else:
-                print(self.cfg.objects[obj][selector])
+                print(self.store.objects[obj][selector])
 
     def _ls_completions(self):
-        return WordCompleter(list(self.cfg.objects))
+        return WordCompleter(list(self.store.objects))
 
 
     def do_show(self, obj, selector=None):
-        for obj in self.cfg.objects[obj].select(selector):
+        for obj in self.store.objects[obj].select(selector):
             print(f"----- {obj.key} -----")
             print(json.dumps(obj.to_json(), indent=4))
 
     def _show_completions(self):
-        return WordCompleter(list(self.cfg.objects))
+        return WordCompleter(list(self.store.objects))
 
     def do_add(self, obj, val=""):
         try:
@@ -1020,16 +1020,16 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         except:
             print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
         else:
-            Obj = self.cfg._objects[obj]
-            o = Obj(config=self.cfg, **val)
+            Obj = self.store._objects[obj]
+            o = Obj(store=self.store, **val)
             print(f"adding {o}")
-            self.cfg.objects[obj].add(o)
+            self.store.objects[obj].add(o)
 
     def _add_completions(self):
-        return WordCompleter(list(self.cfg._objects))
+        return WordCompleter(list(self.store._objects))
 #        XXX: fix nested completer
-#        print({k: {f:None for f in v._fields} for k,v in self.cfg._objects.items() })
-#        return NestedCompleter({k: {f:None for f in v._fields} for k,v in self.cfg._objects.items() })
+#        print({k: {f:None for f in v._fields} for k,v in self.store._objects.items() })
+#        return NestedCompleter({k: {f:None for f in v._fields} for k,v in self.store._objects.items() })
 
 
     def do_update(self, obj, selector, val):
@@ -1039,7 +1039,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
             raise
 
-        objs = self.cfg.objects[obj].select(selector)
+        objs = self.store.objects[obj].select(selector)
         for o in objs:
             print(f"Updating {o}")
             for f,(_,t) in o._fields.items():
@@ -1048,21 +1048,21 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                     new_ = t(val[f])
                     print(f"  + {f}: {old} --> {new_}")
                     o.values[f] = new_
-        self.cfg.objects[obj].rehash()
+        self.store.objects[obj].rehash()
 
     def do_del(self, obj, selector):
-        objs = self.cfg.objects[obj]
+        objs = self.store.objects[obj]
         for o in objs.select(selector):
             print(f"deleting {obj} {o.key}")
             del(objs[o])
 
     def _del_completions(self):
-        return WordCompleter(list(self.cfg._objects))
+        return WordCompleter(list(self.store._objects))
 
 
 
     def do_cat(self, selector, pth):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             try:
                 c = node.recall_file(pth)
@@ -1076,11 +1076,11 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
     async def do_cnx(self, selector=None):
         if selector is None:
-            for n in self.cfg.nodes:
+            for n in self.store.nodes:
                 if n.session:
                     print(n.session)
         else:
-            nodes = self.cfg.nodes.select(selector)
+            nodes = self.store.nodes.select(selector)
             for node in nodes:
                 cnx = node.connect()
                 t = asyncio.create_task(cnx)
@@ -1096,7 +1096,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                 print(f"Connected to {node.shortname}")
 
     async def do_id(self, selector=None):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             cnx = node.identify()
             t = asyncio.create_task(cnx)
@@ -1125,14 +1125,14 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                 print(f"-----[{node.shortname}]-----")
                 print(sout)
 
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         res = await asyncio.gather(*[run_and_print(node, cmd) for node in nodes])
 
 
     ######### HARVEST
 
     async def do_info(self, selector):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         async def print_info(node):
             try:
                 nfo = await node.collect_infos()
@@ -1146,7 +1146,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     async def do_collect_logins(self, selector):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_logins(node))
             t.add_done_callback(lambda ctx: self.cb_collect_logins(node, ctx))
@@ -1157,7 +1157,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     async def do_collect_filenames(self, selector):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_filenames(node))
             t.add_done_callback(lambda ctx:self.cb_collect_filenames(node, ctx))
@@ -1168,7 +1168,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     async def do_collect_files(self, selector):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_files(node))
             t.add_done_callback(lambda ctx: self.cb_collect_files(node, ctx))
@@ -1179,7 +1179,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     async def do_collect_routes(self, selector):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_routes())
             t.add_done_callback(lambda ctx: self.cb_collect_routes(node, ctx))
@@ -1190,7 +1190,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
 
     async def do_collect_arp_cache(self, selector):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_arp_cache())
             t.add_done_callback(lambda ctx: self.cb_collect_arp_cache(node, ctx))
@@ -1207,25 +1207,25 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         print(f"{nkeys} new potential ssh keys discovered")
 
     def do_decrypt_ssh_keys(self, selector=None):
-        n = self.cfg.op.decrypt_ssh_keys(selector)
+        n = self.store.op.decrypt_ssh_keys(selector)
         print(f"Decrypted {n} ssh keys")
 
     def do_extract_networks(self, selector=None):
-        nodes = self.cfg.nodes.select(selector)
+        nodes = self.store.nodes.select(selector)
         extnets = []
         extnodes = []
         for node in nodes:
             # Extract from arp cache
             for e in node.arp_cache:
-                extnodes.append(Node(config=self.cfg, ip=e))
+                extnodes.append(Node(store=self.store, ip=e))
             # Extract from routes
             for r in node.routes:
                 dst = r.get("dst")
                 if dst and dst != "default":
-                    extnets.append(Net(config=self.cfg, cidr=dst))
+                    extnets.append(Net(store=self.store, cidr=dst))
                 gw = r.get("gateway")
                 if gw:
-                    extnodes.append(Node(config=self.cfg, ip=gw))
+                    extnodes.append(Node(store=self.store, ip=gw))
             # Extract from known hosts:
             for pth in node.files:
                 if pth.endswith("known_hosts"):
@@ -1236,7 +1236,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
                     print(c)
                     kh = asyncssh.import_known_hosts(c)
                     for h in kh._exact_entries.keys():
-                        extnodes.append(Node(config=self.cfg, ip=h))
+                        extnodes.append(Node(store=self.store, ip=h))
         nnets = self.store.networks.add_batch(extnets)
         nnodes = self.store.nodes.add_batch(extnodes)
         print(f"Added {nnets} new networks and {nnodes} new nodes")
@@ -1248,12 +1248,12 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         netgraph = defaultdict(set)
         remotes = defaultdict(set)
         ip2name = {}
-        for node in self.cfg.nodes:
+        for node in self.store.nodes:
             for r in node.routes:
                 src = r.get("prefsrc")
                 if src:
                     ip2name[src] = node.nodename
-        for node in self.cfg.nodes:
+        for node in self.store.nodes:
             devs = defaultdict(set)
             for r in node.routes:
                 src = r.get("prefsrc")
@@ -1313,12 +1313,12 @@ async def main(args=None):
     options = parser.parse_args(args)
 
     try:
-        with Config(options.database) as options.config:
-            options.operations = Operations(options.config)
+        with Store(options.database) as options.store:
+            options.operations = Operations(options.store)
             await PwnCLI(options).run()
     except Exception as e:
         print(f"ERROR: {e}")
-        print("You can still recover data from options.config.nodes, etc.")
+        print("You can still recover data from options.store.nodes, etc.")
         sys.last_traceback = e.__traceback__
         pdb.pm()
 
