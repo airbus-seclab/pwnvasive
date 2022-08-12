@@ -713,12 +713,7 @@ class Config(object):
                     for cb in self.callbacks[eventclass][objclass]:
                         t = asyncio.create_task(cb(event))
 
-class Link(object):
-    async def __init__(self, node):
-        self.node = node
 
-class SSH(Link):
-    pass
 
 
 class PwnCLI(aiocmd.PromptToolkitCmd):
