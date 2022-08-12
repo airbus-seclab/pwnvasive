@@ -545,7 +545,7 @@ class Node(Mapping):
         return content
 
     async def mget(self, *paths):
-        sftp = await self.get_sftp()
+        sftp = await self.get_sftp_session()
         try:
             async with self._semaphore_ssh_limit:
                 lst = await sftp.glob(paths, error_handler=lambda x:None)
