@@ -738,7 +738,7 @@ class Operations(object):
     def inspect_arp_cache(self, node):
         extnodes = []
         for ip in node.arp_cache:
-            extnodes.append(Node(store=self.store, ip=ip)) # XXX jump_host=node.key ?
+            extnodes.append(Node(store=self.store, ip=ip, jump_host=node.shortname))
         nnodes = self.store.nodes.add_batch(extnodes)
         return nnodes
     def inspect_routes(self, node):
@@ -750,7 +750,7 @@ class Operations(object):
                 extnets.append(Net(store=self.store, cidr=dst))
                 gw = r.get("gateway")
                 if gw:
-                    extnodes.append(Node(store=self.store, ip=gw))
+                    extnodes.append(Node(store=self.store, ip=gw, jump_host=node.shortname))
         nnodes = self.store.nodes.add_batch(extnodes)
         nnets = self.store.networks.add_batch(extnets)
         return nnodes,nnets
