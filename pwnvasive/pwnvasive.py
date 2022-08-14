@@ -607,22 +607,28 @@ class Event(object):
 class EventNewContent(Event):
     pass
 
-class EventCreate(EventNewContent):
+class EventDataModified(EventNewContent):
     pass
 
-class EventUpdate(EventNewContent):
+class EventCreate(EventDataModified):
     pass
 
-class EventNodeReached(EventUpdate):
+class EventUpdate(EventDataModified):
     pass
 
-class EventNodeConnected(EventUpdate):
+class EventStateModified(EventNewContent):
     pass
 
-class EventNodeIdentified(EventUpdate):
+class EventNodeReached(EventStateModified):
     pass
 
-class EventNodeNewData(EventUpdate):
+class EventNodeConnected(EventStateModified):
+    pass
+
+class EventNodeIdentified(EventStateModified):
+    pass
+
+class EventNodeNewData(EventDataModified):
     pass
 
 class EventNodeARPCache(EventNodeNewData):
@@ -896,7 +902,7 @@ class Handlers(HandlerRegistry):
     async def collect_filenames(self, event):
         await self.op.collect_filenames(event.obj)
 
-    @HandlerRegistry.register(([EventCreate],[LinuxFile]))
+    @HandlerRegistry.register(([EventDataModified],[LinuxFile]))
     async def collect_files(self, event):
         await asyncio.gather(*[node.get(event.obj.path) for node in self.store.nodes],
                              return_exceptions=True)
@@ -909,7 +915,7 @@ class Handlers(HandlerRegistry):
     async def inspect_arp_cache(self, event):
         self.op.inspect_arp_cache(event.obj)
 
-    @HandlerRegistry.register(([EventNodeARPCache],[Node]))
+    @HandlerRegistry.register(([EventNodeRoute],[Node]))
     async def inspect_routes(self, event):
         self.op.inspect_routes(event.obj)
 
@@ -922,11 +928,11 @@ class Handlers(HandlerRegistry):
         c = event.obj.recall_file(event.path)
         self.op.extract_ssh_keys_from_content(c)
 
-    @HandlerRegistry.register(([EventCreate],[SSHKey]))
+    @HandlerRegistry.register(([EventDataModified],[SSHKey]))
     async def decrypt_ssh_keys(self, event):
         self.op.decrypt_ssh_keys(event.obj)
 
-    @HandlerRegistry.register(([EventCreate,EventNodeConnected],[Node]))
+    @HandlerRegistry.register(([EventDataModified,EventNodeConnected],[Node]))
     async def identify_node(self, event):
         try:
             await event.obj.identify()
@@ -935,7 +941,7 @@ class Handlers(HandlerRegistry):
         except NodeUnreachable:
             pass
 
-    @HandlerRegistry.register(([EventNewContent],[Login, Password, SSHKey]))
+    @HandlerRegistry.register(([EventDataModified],[Login, Password, SSHKey]))
     async def try_new_creds(self, event):
         await asyncio.gather(*(node.connect() for node in self.store.nodes),
                              return_exceptions=True)
