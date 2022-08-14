@@ -1203,7 +1203,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     async def do_collect_routes(self, selector):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(self.op.collect_routes())
+            t = asyncio.create_task(self.op.collect_routes(node))
             t.add_done_callback(lambda ctx: self.cb_collect_routes(node, ctx))
 
     def cb_collect_routes(self, node, t):
