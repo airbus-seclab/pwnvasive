@@ -932,6 +932,8 @@ class Handlers(HandlerRegistry):
             await event.obj.identify()
         except NoCredsFound:
             pass
+        except NodeUnreachable:
+            pass
 
     @HandlerRegistry.register(([EventNewContent],[Login, Password, SSHKey]))
     async def try_new_creds(self, event):
