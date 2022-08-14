@@ -406,14 +406,14 @@ class Node(Mapping):
             if self._reached is None:
                 if self.jump_host is None:
                     try:
-                        r,w=await asyncio.open_connection(self.ip, self.port)
+                        r,w = await asyncio.open_connection(self.ip, self.port)
                     except OSError as e:
                         if e.errno != 111:
                             raise
                         self._reached = False
                     else:
                         self._reached = True
-                    w.close()
+                        w.close()
                 else:
                     try:
                         jh = self.store.nodes[self.jump_host]
@@ -426,7 +426,7 @@ class Node(Mapping):
                         self._reached = False
                     else:
                         self._reached = True
-                    c.close()
+                        c.close()
                 self.values["reachable"] = self._reached
                 if self._reached:
                     self.store.notify(EventNodeReached(self))
