@@ -986,6 +986,12 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     def _auto_completions(self):
         return WordCompleter(self.handlers.list())
 
+
+    async def do_notify(self, collection, selector):
+        coll = self.store.objects[collection]
+        obj = coll[selector]
+        self.store.notify(EventUpdate(obj))
+
     ########## DEBUG
 
     def do_eval(self, cmd):
