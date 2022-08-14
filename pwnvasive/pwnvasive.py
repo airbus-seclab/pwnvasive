@@ -379,10 +379,10 @@ class Node(Mapping):
         self._session = None
         self._sftp = None
         self._os = None
-        self._semaphore_reached = asyncio.Semaphore(1)
-        self._semaphore_session = asyncio.Semaphore(1)
-        self._semaphore_sftp = asyncio.Semaphore(1)
-        self._semaphore_os = asyncio.Semaphore(1)
+        self._semaphore_reached = asyncio.Lock()
+        self._semaphore_session = asyncio.Lock()
+        self._semaphore_sftp = asyncio.Lock()
+        self._semaphore_os = asyncio.Lock()
         self._semaphore_ssh_limit = asyncio.Semaphore(10) # limit to 10 concurrent ssh operations
 
         if self.values.get("os") == "linux":
