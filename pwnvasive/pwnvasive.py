@@ -754,6 +754,19 @@ class Operations(object):
         nnodes = self.store.nodes.add_batch(extnodes)
         nnets = self.store.networks.add_batch(extnets)
         return nnodes,nnets
+    def inspect_known_hosts(self, node):
+        extnodes = []
+        for pth in node.files:
+            if pth.endswith("known_hosts") or pth.endswith("known_hosts2"):
+                try:
+                    c = node.recall_file(pth).decode("ascii")
+                except UnicodeDecodeError:
+                    continue
+                kh = asyncssh.import_known_hosts(c)
+                for h in kh._exact_entries.keys():
+                    extnodes.append(Node(store=self.store, ip=h, jump_host=node.shortname))
+        nnodes = self.store.nodes.add_batch(extnodes)
+        return nnodes
 
 
     _re_key = re.compile(b"(-----BEGIN ([A-Z0-9 _]*?)PRIVATE KEY-----.*?\n-----END \\2PRIVATE KEY-----)",
@@ -898,6 +911,10 @@ class Handlers(HandlerRegistry):
 
     @HandlerRegistry.register(([EventNodeARPCache],[Node]))
     async def inspect_routes(self, event):
+        self.op.inspect_routes(event.obj)
+
+    @HandlerRegistry.register(([EventNodeFile],[Node]))
+    async def inspect_known_hosts(self, event):
         self.op.inspect_routes(event.obj)
 
     @HandlerRegistry.register(([EventNodeFile],[Node]))
