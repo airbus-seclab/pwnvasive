@@ -1232,33 +1232,13 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
     def do_extract_networks(self, selector=None):
         nodes = self.store.nodes.select(selector)
-        extnets = []
-        extnodes = []
+        nnets = nnodes = 0
         for node in nodes:
-            # Extract from arp cache
-            for e in node.arp_cache:
-                extnodes.append(Node(store=self.store, ip=e))
-            # Extract from routes
-            for r in node.routes:
-                dst = r.get("dst")
-                if dst and dst != "default":
-                    extnets.append(Net(store=self.store, cidr=dst))
-                gw = r.get("gateway")
-                if gw:
-                    extnodes.append(Node(store=self.store, ip=gw))
-            # Extract from known hosts:
-            for pth in node.files:
-                if pth.endswith("known_hosts"):
-                    try:
-                        c = node.recall_file(pth).decode("ascii")
-                    except UnicodeDecodeError:
-                        continue
-                    print(c)
-                    kh = asyncssh.import_known_hosts(c)
-                    for h in kh._exact_entries.keys():
-                        extnodes.append(Node(store=self.store, ip=h))
-        nnets = self.store.networks.add_batch(extnets)
-        nnodes = self.store.nodes.add_batch(extnodes)
+            nnodes += self.op.inspect_arp_cache(node)
+            no,ne = self.op.inspect_routes(node)
+            nnodes += no
+            nnets += ne
+            nnodes += self.op.inspect_known_hosts(node)
         print(f"Added {nnets} new networks and {nnodes} new nodes")
 
 
