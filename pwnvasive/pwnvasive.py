@@ -379,10 +379,10 @@ class Node(Mapping):
         self._session = None
         self._sftp = None
         self._os = None
-        self._semaphore_reached = asyncio.Lock()
-        self._semaphore_session = asyncio.Lock()
-        self._semaphore_sftp = asyncio.Lock()
-        self._semaphore_os = asyncio.Lock()
+        self._lock_reached = asyncio.Lock()
+        self._lock_session = asyncio.Lock()
+        self._lock_sftp = asyncio.Lock()
+        self._lock_os = asyncio.Lock()
         self._semaphore_ssh_limit = asyncio.Semaphore(10) # limit to 10 concurrent ssh operations
 
         if self.values.get("os") == "linux":
@@ -402,7 +402,7 @@ class Node(Mapping):
 
 
     async def get_reached(self):
-        async with self._semaphore_reached:
+        async with self._lock_reached:
             if self._reached is None:
                 if self.jump_host is None:
                     try:
@@ -453,7 +453,7 @@ class Node(Mapping):
         reached = await self.get_reached()
         if not reached:
             raise NodeUnreachable(f"cannot reach {self.shortname}")
-        async with self._semaphore_session:
+        async with self._lock_session:
             if self._session is None:
                 if not self.working_credentials:
                     c0 = [{"username":l.login} for l in self.store.logins]
@@ -481,7 +481,7 @@ class Node(Mapping):
             return self._session
 
     async def get_os(self):
-        async with self._semaphore_os:
+        async with self._lock_os:
             if self._os is None:
                 session = await self.get_session()
                 async with self._semaphore_ssh_limit:
@@ -496,7 +496,7 @@ class Node(Mapping):
             return self._os
 
     async def get_sftp_session(self):
-        async with self._semaphore_sftp:
+        async with self._lock_sftp:
             if self._sftp is None:
                 session = await self.get_session()
                 self._sftp = await session.start_sftp_client()
