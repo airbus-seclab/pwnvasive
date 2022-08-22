@@ -595,7 +595,13 @@ class Node(Mapping):
 
 
 # Hierarchy of events
-class Event(object):
+class EventMetaclass(type):
+    def __init__(self, *args, **kargs):
+        super().__init__(*args, **kargs)
+        self.all_events[self.__name__] = self
+
+class Event(object, metaclass=EventMetaclass):
+    all_events = {}
     def __init__(self, obj, **kargs):
         self.obj = obj
         self._details = kargs
