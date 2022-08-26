@@ -1012,11 +1012,11 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         return WordCompleter(self.handlers.list())
 
 
-    async def do_notify(self, collection, selector, event=None):
-        coll = self.store.objects[collection]
-        obj = coll[selector]
+    async def do_notify(self, obj, selector=None, event=None):
+
         event = Event.all_events.get(event, EventUpdate)
-        self.store.notify(event(obj))
+        for obj in self.store.objects[obj].select(selector):
+            self.store.notify(event(obj))
 
     async def do_flush(self, obj, selector=None):
         objs = self.store.objects[obj].select(selector)
