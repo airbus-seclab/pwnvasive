@@ -1058,11 +1058,15 @@ class PwnCLI(CmdWithCustomPromptSession):
     def _flush_completions(self):
         return WordCompleter(list(self.store._objects))
 
-    def do_disconnect(self, selector=None):
+    async def do_disconnect(self, selector=None):
         objs = self.store.nodes.select(selector)
-        for o in objs:
-            print(f"Disconnecting {o}")
-            o.disconnect()
+        for x,y in zip(objs, asyncio.as_completed([o.disconnect() for o in objs])):
+            disc = await y
+            action = "Disconnected:     " if disc else "Left disconnected:"
+            print(f"{action} {x}")
+        if len(objs) >= 2:
+            print(f"All {len(objs)} nodes have been disconnected.")
+
 
     ########## DEBUG
 
