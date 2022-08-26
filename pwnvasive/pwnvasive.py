@@ -7,6 +7,7 @@ import json
 import argparse
 import logging
 from aiocmd import aiocmd
+import prompt_toolkit
 from prompt_toolkit.completion import WordCompleter,NestedCompleter
 import os
 from enum import Enum,auto
@@ -671,8 +672,8 @@ class EventDelete(Event):
 
 DEFAULT_CONFIG = {
     "meta": { "version": "0.1", },
-    "state": {
-    },
+    "state": {},
+    "history": [],
 }
 
 class Store(object):
@@ -701,6 +702,10 @@ class Store(object):
         for f,c in self._objects.items():
             self.objects[f] = Collection(self, c, [c.from_json(d, store=self)
                                                    for d in  s.get(f,[])])
+        self.history = prompt_toolkit.history.InMemoryHistory()
+        for l in j.get("history",[]):
+            self.history.append_string(l)
+
         self.dispatcher_task = asyncio.create_task(self.event_dispatcher(), name="main dispatcher")
 
     def __getattr__(self, attr):
@@ -718,6 +723,7 @@ class Store(object):
         if fname is None:
             fname = self.fname
         self.config["state"].update(self.objects)
+        self.config["history"] = self.history.get_strings()
         with open(fname+".tmp", "w") as f:
             json.dump(self.config, f, indent=4, cls=JSONEnc)
         os.rename(fname+".tmp", fname) # overwrite file only if json dump completed
@@ -971,7 +977,30 @@ class Handlers(HandlerRegistry):
                              return_exceptions=True)
 
 
-class PwnCLI(aiocmd.PromptToolkitCmd):
+### Subclass aiocmd to pass arguments to PromptSession
+
+import signal
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
+
+class CmdWithCustomPromptSession(aiocmd.PromptToolkitCmd):
+    async def run(self, **session_kargs):
+        if self._ignore_sigint and sys.platform != "win32":
+            asyncio.get_event_loop().add_signal_handler(signal.SIGINT, self._sigint_handler)
+        self.session = PromptSession(enable_history_search=True,
+                                     key_bindings=self._get_bindings(),
+                                     **session_kargs)
+        try:
+            with patch_stdout():
+                await self._run_prompt_forever()
+        finally:
+            if self._ignore_sigint and sys.platform != "win32":
+                asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
+            self._on_close()
+
+###
+
+class PwnCLI(CmdWithCustomPromptSession):
     def __init__(self, options):
         self.options = options
         self.store = options.store
@@ -1379,7 +1408,7 @@ async def main(args=None):
     try:
         with Store(options.database) as options.store:
             options.operations = Operations(options.store)
-            await PwnCLI(options).run()
+            await PwnCLI(options).run(history=options.store.history)
     except Exception as e:
         print(f"ERROR: {e}")
         print("You can still recover data from options.store.nodes, etc.")
