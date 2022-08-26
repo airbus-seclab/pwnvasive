@@ -514,6 +514,12 @@ class Node(Mapping):
                 self._sftp = await session.start_sftp_client()
         return self._sftp
 
+    async def disconnect(self):
+        async with self._lock_session:
+            if self._session:
+                self._session.disconnect()
+            self._session = None
+
     def remember_file(self, path, content):
         c = base64.b85encode(zlib.compress(content)).decode("ascii")
         if path in self.files:
@@ -1021,6 +1027,12 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
 
     def _flush_completions(self):
         return WordCompleter(list(self.store._objects))
+
+    def do_disconnect(self, selector=None):
+        objs = self.store.nodes.select(selector)
+        for o in objs:
+            print(f"Disconnecting {o}")
+            o.disconnect()
 
     ########## DEBUG
 
