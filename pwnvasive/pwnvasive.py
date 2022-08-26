@@ -470,11 +470,12 @@ class Node(Mapping):
             if self._session is None:
                 if not self.working_credentials:
                     c0 = [{"username":l.login} for l in self.store.logins]
-                    c1 = [{"username":l.login, "password":p.password}
+                    c1 = [{"username":l.login, "password":l.login} for l in self.store.logins]
+                    c2 = [{"username":l.login, "password":p.password}
                           for l in self.store.logins for p in self.store.passwords]
-                    c2 = [{"username":l.login, "client_keys": s.sshkey}
+                    c3 = [{"username":l.login, "client_keys": s.sshkey}
                           for l in self.store.logins for s in self.store.sshkeys if s._sshkey]
-                    creds = (c for c in c0+c1+c2 if c not in self.tested_credentials)
+                    creds = (c for c in c0+c1+c2+c3 if c not in self.tested_credentials)
                     res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
                     self.tested_credentials.extend([cred for cred,r,_ in res if not r])
                     self.working_credentials.extend([cred for cred,r,_ in res if r])
@@ -750,9 +751,7 @@ class Operations(object):
         logins = await node.collect_logins()
         olog = [self.store.logins.mapping(store=self.store, login=l) for l in logins]
         nlog = self.store.logins.add_batch(olog)
-        opwd = [self.store.passwords.mapping(store=self.store, password=l) for l in logins]
-        npwd = self.store.passwords.add_batch(opwd)
-        return logins,nlog,npwd
+        return logins,nlog
     async def collect_routes(self, node):
         return await node.collect_routes()
     async def collect_files(self, node):
@@ -1233,8 +1232,8 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             t.add_done_callback(lambda ctx,node=node: self.cb_collect_logins(node, ctx))
 
     def cb_collect_logins(self, node, t):
-        _logins,nlog,npwd = t.result()
-        print(f"{node.shortname}: {nlog} new logins, {npwd} new passwords")
+        _logins,nlog = t.result()
+        print(f"{node.shortname}: {nlog} new logins")
 
 
     async def do_collect_filenames(self, selector):
