@@ -229,6 +229,7 @@ class Mapping(object, metaclass=MappingMeta):
     _fields = {}
     _key = None # tuple. If None, metaclass will use the first field of _field.
     _keytype = None # automatically computed from _key and _fields by metaclass
+    _is_cache = []
     def __init__(self, store=None, **kargs):
         self.store = store
         self.values = {}
@@ -242,6 +243,12 @@ class Mapping(object, metaclass=MappingMeta):
         raise AttributeError(attr)
     def __getitem__(self, item):
         return self.values[item]
+    async def flush(self):
+        for k in self._is_cache:
+            v = self._fields[k][0]
+            if type(v) in [list, dict]:
+                v = v.copy()
+            self.values[k] = v
     @property
     def key(self):
         return tuple(self.values[x] for x in self._key)
@@ -286,6 +293,7 @@ class Net(Mapping):
         "cidr": ("127.0.0.1/32", str),
         "scanned": (False, bool),
     }
+    _is_cache = ["scanned"]
 
 class Login(Mapping):
     _fields = {
@@ -372,6 +380,7 @@ class Node(Mapping):
         "os":                  (None, str),
         "files":               ({}, dict),
     }
+    _is_cache = ["reachable", "controlled", "tested_credentials"]
 
     def __init__(self, **kargs):
         super().__init__(**kargs)
@@ -400,6 +409,10 @@ class Node(Mapping):
     def nodename(self):
         return self.hostname or self.ip
 
+    async def flush(self):
+        await super().flush()
+        async with self._lock_reached:
+            self._reached = None
 
     async def get_reached(self):
         async with self._lock_reached:
@@ -427,9 +440,9 @@ class Node(Mapping):
                     else:
                         self._reached = True
                         c.close()
-                self.values["reachable"] = self._reached
                 if self._reached:
                     self.store.notify(EventNodeReached(self))
+            self.values["reachable"] = self._reached
             return self._reached
 
     async def _test_creds(self, **creds):
@@ -465,25 +478,24 @@ class Node(Mapping):
                     res = await asyncio.gather(*[self._test_creds(**c) for c in creds])
                     self.tested_credentials.extend([cred for cred,r,_ in res if not r])
                     self.working_credentials.extend([cred for cred,r,_ in res if r])
-                    if self.working_credentials:
-                        self.values["controlled"] = True
-                        for _,r,sess in res:
-                            if r:
-                                self._session = sess
-                                break
-                        self.store.notify(EventNodeConnected(self))
-                    else:
+                    if not self.working_credentials:
                         self.values["controlled"] = False
                         raise NoCredsFound(self.shortname)
+                    for _,r,sess in res:
+                        if r:
+                            self._session = sess
+                            break
+                    self.store.notify(EventNodeConnected(self))
                 else:
                     _,_,sess = await self._test_creds(**self.working_credentials[0])
                     self._session = sess
+            self.values["controlled"] = True
             return self._session
 
     async def get_os(self):
+        session = await self.get_session()
         async with self._lock_os:
             if self._os is None:
-                session = await self.get_session()
                 async with self._semaphore_ssh_limit:
                     r = await session.run("uname -o")
                 if "linux" in r.stdout.lower():
@@ -999,6 +1011,16 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         obj = coll[selector]
         event = Event.all_events.get(event, EventUpdate)
         self.store.notify(event(obj))
+
+    async def do_flush(self, obj, selector=None):
+        objs = self.store.objects[obj].select(selector)
+        for o in objs:
+            print(f"Flushing {o}")
+            await o.flush()
+        print("Flushing done.")
+
+    def _flush_completions(self):
+        return WordCompleter(list(self.store._objects))
 
     ########## DEBUG
 
