@@ -519,8 +519,10 @@ class Node(Mapping):
     async def disconnect(self):
         async with self._lock_session:
             if self._session:
-                self._session.disconnect()
-            self._session = None
+                self._session.close()
+                self._session = None
+                return True
+            return False
 
     def remember_file(self, path, content):
         c = base64.b85encode(zlib.compress(content)).decode("ascii")
