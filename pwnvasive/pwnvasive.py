@@ -1131,7 +1131,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             for node in nodes:
                 cnx = node.connect()
                 t = asyncio.create_task(cnx, name="do_cnx")
-                t.add_done_callback(lambda ctx:self.cb_connected(node, ctx))
+                t.add_done_callback(lambda ctx,node=node:self.cb_connected(node, ctx))
 
     def cb_connected(self, node, t):
         try:
@@ -1147,7 +1147,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         for node in nodes:
             cnx = node.identify()
             t = asyncio.create_task(cnx, name="do_id")
-            t.add_done_callback(lambda ctx:self.cb_identified(node, ctx))
+            t.add_done_callback(lambda ctx,node=node:self.cb_identified(node, ctx))
 
     def cb_identified(self, node, t):
         try:
@@ -1196,7 +1196,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_logins(node), name="do_collect_login")
-            t.add_done_callback(lambda ctx: self.cb_collect_logins(node, ctx))
+            t.add_done_callback(lambda ctx,node=node: self.cb_collect_logins(node, ctx))
 
     def cb_collect_logins(self, node, t):
         _logins,nlog,npwd = t.result()
@@ -1207,7 +1207,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_filenames(node), name="do_collect_filenames")
-            t.add_done_callback(lambda ctx:self.cb_collect_filenames(node, ctx))
+            t.add_done_callback(lambda ctx,node=node:self.cb_collect_filenames(node, ctx))
 
     def cb_collect_filenames(self, node, t):
         nbold,nbnew = t.result()
@@ -1218,7 +1218,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_files(node), name="do_collect_files")
-            t.add_done_callback(lambda ctx: self.cb_collect_files(node, ctx))
+            t.add_done_callback(lambda ctx,node=node: self.cb_collect_files(node, ctx))
 
     def cb_collect_files(self, node, t):
         fnames = t.result()
@@ -1229,7 +1229,7 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
             t = asyncio.create_task(self.op.collect_routes(node), name="do_collect_routes")
-            t.add_done_callback(lambda ctx: self.cb_collect_routes(node, ctx))
+            t.add_done_callback(lambda ctx,node=node: self.cb_collect_routes(node, ctx))
 
     def cb_collect_routes(self, node, t):
         routes = t.result()
@@ -1239,8 +1239,8 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
     async def do_collect_arp_cache(self, selector):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
-            t = asyncio.create_task(self.op.collect_arp_cache(), name="do_collect_arp_cache")
-            t.add_done_callback(lambda ctx: self.cb_collect_arp_cache(node, ctx))
+            t = asyncio.create_task(self.op.collect_arp_cache(node), name="do_collect_arp_cache")
+            t.add_done_callback(lambda ctx,node=node: self.cb_collect_arp_cache(node, ctx))
 
     def cb_collect_arp_cache(self, node, t):
         cache = t.result()
