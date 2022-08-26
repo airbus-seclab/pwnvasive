@@ -1243,8 +1243,12 @@ class PwnCLI(aiocmd.PromptToolkitCmd):
             t.add_done_callback(lambda ctx,node=node: self.cb_collect_arp_cache(node, ctx))
 
     def cb_collect_arp_cache(self, node, t):
-        cache = t.result()
-        print(f"{node.shortname}: retrieved {len(cache)} cache entries")
+        try:
+            cache = t.result()
+        except PwnvasiveException as e:
+            print(e)
+        else:
+            print(f"{node.shortname}: retrieved {len(cache)} cache entries")
 
 
 
