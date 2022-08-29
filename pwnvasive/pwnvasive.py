@@ -8,7 +8,7 @@ import argparse
 import logging
 from aiocmd import aiocmd
 import prompt_toolkit
-from prompt_toolkit.completion import WordCompleter,NestedCompleter
+from prompt_toolkit.completion import WordCompleter,NestedCompleter,PathCompleter
 import os
 from enum import Enum,auto
 import base64
@@ -1024,9 +1024,24 @@ class PwnCLI(CmdWithCustomPromptSession):
                      for k,v in [x.strip().split("=",1) for x in s.split(" ")] }
 
 
+
+    def obj_selector_completer(self):
+        return NestedCompleter({
+            coll: NestedCompleter({
+                obj.key_as_str: None
+                for obj in self.store.objects[coll]
+            })
+            for coll in self.store._objects
+        })
+
+    def selector_completer(self, collection):
+        return WordCompleter(["*"]+[x.key_as_str for x in collection])
+
     def do_save(self, fname=None):
         self.store.save(fname)
 
+    def _save_completions(self):
+        return PathCompleter(expanduser=True)
 
     def do_auto(self, handler=None, on="on"):
         if handler is None:
@@ -1040,16 +1055,24 @@ class PwnCLI(CmdWithCustomPromptSession):
                 elif on.lower() in ["off", "0", "ko", "false"]:
                     self.handlers.deactivate(h)
 
-
     def _auto_completions(self):
-        return WordCompleter(self.handlers.list())
-
+        onoff = WordCompleter(["on", "off"])
+        return NestedCompleter({k:onoff for k in self.handlers.list()})
 
     async def do_notify(self, obj, selector=None, event=None):
-
         event = Event.all_events.get(event, EventUpdate)
         for obj in self.store.objects[obj].select(selector):
             self.store.notify(event(obj))
+
+    def _notify_completions(self):
+        ev = WordCompleter(list(Event.all_events))
+        return NestedCompleter({
+            coll: NestedCompleter({
+                obj.key_as_str: ev
+                for obj in self.store.objects[coll]
+            })
+            for coll in self.store._objects
+        })
 
     async def do_flush(self, obj, selector=None):
         objs = self.store.objects[obj].select(selector)
@@ -1059,7 +1082,7 @@ class PwnCLI(CmdWithCustomPromptSession):
         print("Flushing done.")
 
     def _flush_completions(self):
-        return WordCompleter(list(self.store._objects))
+        return self.obj_selector_completer()
 
     async def do_disconnect(self, selector=None):
         objs = self.store.nodes.select(selector)
@@ -1069,6 +1092,9 @@ class PwnCLI(CmdWithCustomPromptSession):
             print(f"{action} {x}")
         if len(objs) >= 2:
             print(f"All {len(objs)} nodes have been disconnected.")
+
+    def _disconnect_completions(self):
+        return self.selector_completer(self.store.nodes)
 
 
     ########## DEBUG
@@ -1096,8 +1122,10 @@ class PwnCLI(CmdWithCustomPromptSession):
                 self.handlers.start_trace(self.handler_monitor)
             else:
                 self.handlers.stop_trace()
+
     def _monitor_completions(self):
-        return WordCompleter(["events", "handlers"])
+        onoff = WordCompleter(["on", "off"])
+        return NestedCompleter({k:onoff for k in ["events", "handlers"]})
 
     async def event_monitor(self, event):
         print(f"MONITOR: {event}")
@@ -1121,8 +1149,7 @@ class PwnCLI(CmdWithCustomPromptSession):
                 print(self.store.objects[obj][selector])
 
     def _ls_completions(self):
-        return WordCompleter(list(self.store.objects))
-
+        return self.obj_selector_completer()
 
     def do_show(self, obj, selector=None):
         for obj in self.store.objects[obj].select(selector):
@@ -1130,7 +1157,7 @@ class PwnCLI(CmdWithCustomPromptSession):
             print(json.dumps(obj.to_json(), indent=4))
 
     def _show_completions(self):
-        return WordCompleter(list(self.store.objects))
+        return self.obj_selector_completer()
 
     def do_add(self, obj, val=""):
         try:
@@ -1144,11 +1171,16 @@ class PwnCLI(CmdWithCustomPromptSession):
             self.store.objects[obj].add(o)
 
     def _add_completions(self):
-        return WordCompleter(list(self.store._objects))
-#        XXX: fix nested completer
-#        print({k: {f:None for f in v._fields} for k,v in self.store._objects.items() })
-#        return NestedCompleter({k: {f:None for f in v._fields} for k,v in self.store._objects.items() })
-
+        dct = {}
+        for k,v in self.store._objects.items():
+            d = {f:None for f in v._fields}
+            dct[k] = n = NestedCompleter(d)
+            for k2 in d:
+                d[k2] = n
+        return NestedCompleter({
+            k: dct[k]
+            for k,_ in self.store._objects.items()
+        })
 
     def do_update(self, obj, selector, val):
         try:
@@ -1168,6 +1200,8 @@ class PwnCLI(CmdWithCustomPromptSession):
                     o.values[f] = new_
         self.store.objects[obj].rehash()
 
+    _update_completions = _add_completions
+
     def do_del(self, obj, selector):
         objs = self.store.objects[obj]
         for o in objs.select(selector):
@@ -1175,8 +1209,7 @@ class PwnCLI(CmdWithCustomPromptSession):
             del(objs[o])
 
     def _del_completions(self):
-        return WordCompleter(list(self.store._objects))
-
+        return self.obj_selector_completer()
 
 
     def do_cat(self, selector, pth):
@@ -1193,6 +1226,9 @@ class PwnCLI(CmdWithCustomPromptSession):
                 except:
                     print(c)
 
+    def _cat_completions(self):
+        return NestedCompleter({k.key_as_str: WordCompleter(list(k.files))
+                                for k in self.store.nodes})
 
     ########## CNX
 
@@ -1217,6 +1253,9 @@ class PwnCLI(CmdWithCustomPromptSession):
             if nsession:
                 print(f"Connected to {node.shortname}")
 
+    def _cnx_completions(self):
+        return self.selector_completer(self.store.nodes)
+
     async def do_id(self, selector=None):
         nodes = self.store.nodes.select(selector)
         for node in nodes:
@@ -1231,6 +1270,9 @@ class PwnCLI(CmdWithCustomPromptSession):
             print(f"Connection failed: {e}")
         else:
             print(f"Identified {node.shortname}")
+
+    def _id_completions(self):
+        return self.selector_completer(self.store.nodes)
 
 
     ########## RUN
@@ -1250,6 +1292,9 @@ class PwnCLI(CmdWithCustomPromptSession):
         nodes = self.store.nodes.select(selector)
         res = await asyncio.gather(*[run_and_print(node, cmd) for node in nodes])
 
+    def _run_completions(self):
+        return self.selector_completer(self.store.nodes)
+
 
     ######### HARVEST
 
@@ -1266,6 +1311,8 @@ class PwnCLI(CmdWithCustomPromptSession):
             print(res)
         await asyncio.gather(*[print_info(node) for node in nodes])
 
+    def _info_completions(self):
+        return self.selector_completer(self.store.nodes)
 
     async def do_collect_logins(self, selector):
         nodes = self.store.nodes.select(selector)
@@ -1276,6 +1323,9 @@ class PwnCLI(CmdWithCustomPromptSession):
     def cb_collect_logins(self, node, t):
         _logins,nlog = t.result()
         print(f"{node.shortname}: {nlog} new logins")
+
+    def _collect_logins_completions(self):
+        return self.selector_completer(self.store.nodes)
 
 
     async def do_collect_filenames(self, selector):
@@ -1288,6 +1338,9 @@ class PwnCLI(CmdWithCustomPromptSession):
         nbold,nbnew = t.result()
         print(f"{node.shortname}: retrieved {nbold} file names. {nbnew} were new.")
 
+    def _collect_filenames_completions(self):
+        return self.selector_completer(self.store.nodes)
+
 
     async def do_collect_files(self, selector):
         nodes = self.store.nodes.select(selector)
@@ -1299,6 +1352,9 @@ class PwnCLI(CmdWithCustomPromptSession):
         fnames = t.result()
         print(f"{node.shortname}: retrieved {len(fnames)} new files")
 
+    def _collect_files_completions(self):
+        return self.selector_completer(self.store.nodes)
+
 
     async def do_collect_routes(self, selector):
         nodes = self.store.nodes.select(selector)
@@ -1309,6 +1365,9 @@ class PwnCLI(CmdWithCustomPromptSession):
     def cb_collect_routes(self, node, t):
         routes = t.result()
         print(f"{node.shortname}: retrieved {len(routes)} routes")
+
+    def _collect_routes_completions(self):
+        return self.selector_completer(self.store.nodes)
 
 
     async def do_collect_arp_cache(self, selector):
@@ -1325,12 +1384,19 @@ class PwnCLI(CmdWithCustomPromptSession):
         else:
             print(f"{node.shortname}: retrieved {len(cache)} cache entries")
 
+    def _collect_arp_cache_completions(self):
+        return self.selector_completer(self.store.nodes)
+
 
 
     ########## EXTRACT
     def do_extract_ssh_keys(self, selector):
         okeys,nkeys = self.op.extract_ssh_keys_from_nodes(selector)
         print(f"{nkeys} new potential ssh keys discovered")
+
+    def _extract_ssh_keys_completions(self):
+        return self.selector_completer(self.store.nodes)
+
 
     def do_decrypt_ssh_keys(self, selector=None):
         n = self.store.op.decrypt_ssh_keys(selector)
@@ -1346,6 +1412,9 @@ class PwnCLI(CmdWithCustomPromptSession):
             nnets += ne
             nnodes += self.op.inspect_known_hosts(node)
         print(f"Added {nnets} new networks and {nnodes} new nodes")
+
+    def _extract_networks_completions(self):
+        return self.selector_completer(self.store.nodes)
 
 
     ########## COMPUTE
