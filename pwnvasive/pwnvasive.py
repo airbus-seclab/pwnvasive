@@ -257,8 +257,11 @@ class Mapping(object, metaclass=MappingMeta):
     def str2key(cls, s):
         return tuple(t(v) for t,v in zip(cls._keytype, s.split(":")))
     @property
-    def shortname(self):
+    def key_as_str(self):
         return ":".join(str(self.values.get(k, "")) for k in self._key)
+    @property
+    def shortname(self):
+        return self.key_as_str
     def update(self, other):
         for f in self._fields:
             if f in other:
