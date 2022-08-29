@@ -711,7 +711,7 @@ class Store(object):
         for l in j.get("history",[]):
             self.history.append_string(l)
 
-        self.dispatcher_task = asyncio.create_task(self.event_dispatcher(), name="main dispatcher")
+        self.dispatcher_task = asyncio.create_task(self.event_dispatcher(), name="Event Dispatcher")
 
     def __getattr__(self, attr):
         if attr in self.objects:
