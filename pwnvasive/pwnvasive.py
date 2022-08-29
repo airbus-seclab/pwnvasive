@@ -1187,8 +1187,12 @@ class PwnCLI(CmdWithCustomPromptSession):
             except KeyError:
                 pass
             else:
-                print("----- {node.shortname} -----")
-                print(c)
+                print(f"----- {node.shortname} -----")
+                try:
+                    print(c.decode("utf8"))
+                except:
+                    print(c)
+
 
     ########## CNX
 
