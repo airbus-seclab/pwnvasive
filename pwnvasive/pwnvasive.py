@@ -675,7 +675,7 @@ class EventDelete(Event):
     pass
 
 
-DEFAULT_CONFIG = {
+DEFAULT_STORE = {
     "meta": { "version": "0.1", },
     "state": {},
     "history": [],
@@ -700,9 +700,9 @@ class Store(object):
             with open(fname) as f:
                 j = json.load(f)
         else:
-            j = DEFAULT_CONFIG
-        self.config = j
-        s = self.config["state"]
+            j = DEFAULT_STORE
+        self.store = j
+        s = self.store["state"]
         self.objects = {}
         for f,c in self._objects.items():
             self.objects[f] = Collection(self, c, [c.from_json(d, store=self)
@@ -727,10 +727,10 @@ class Store(object):
     def save(self, fname=None):
         if fname is None:
             fname = self.fname
-        self.config["state"].update(self.objects)
-        self.config["history"] = self.history.get_strings()
+        self.store["state"].update(self.objects)
+        self.store["history"] = self.history.get_strings()
         with open(fname+".tmp", "w") as f:
-            json.dump(self.config, f, indent=4, cls=JSONEnc)
+            json.dump(self.store, f, indent=4, cls=JSONEnc)
         os.rename(fname+".tmp", fname) # overwrite file only if json dump completed
 
 
