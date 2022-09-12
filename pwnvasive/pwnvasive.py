@@ -679,6 +679,9 @@ DEFAULT_STORE = {
     "meta": { "version": "0.1", },
     "state": {},
     "history": [],
+    "config" : {
+        "scope": ["0.0.0.0/0"],
+    }
 }
 
 class Store(object):
@@ -702,6 +705,7 @@ class Store(object):
         else:
             j = DEFAULT_STORE
         self.store = j
+        self.config = self.store.get("config",{})
         s = self.store["state"]
         self.objects = {}
         for f,c in self._objects.items():
@@ -1042,6 +1046,40 @@ class PwnCLI(CmdWithCustomPromptSession):
 
     def _save_completions(self):
         return PathCompleter(expanduser=True)
+
+    def do_config(self, key=None, op=None, val=None):
+        if key is None:
+            for k,v in self.store.config.items():
+                print(f"{k:15}= {v}")
+            return
+        else:
+            if op is None:
+                op = "get"
+            if op not in ["get", "empty"] and val is None:
+                print("Missing argument")
+                return
+            if val is not None:
+                try:
+                    val = json.loads(val)
+                except json.JSONDecodeError:
+                    pass
+            if op == "get":
+                print(json.dumps(self.store.config.get(key),indent=4))
+            elif op == "set":
+                self.store.config[key] = val
+            elif op == "add":
+                self.store.config[key].append(val)
+            elif op == "del":
+                self.store.config[key].remove(val)
+            elif op == "empty":
+                self.store.config[key] = []
+            else:
+                print(f"Unknonwn operation: {op}")
+
+    def _config_completions(self):
+        op = WordCompleter(["get", "set", "add", "del", "empty"])
+        return NestedCompleter({k: op for k in self.store.config})
+
 
     def do_auto(self, handler=None, on="on"):
         if handler is None:
