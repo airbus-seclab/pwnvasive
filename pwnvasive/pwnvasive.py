@@ -413,6 +413,14 @@ class Node(Mapping):
     def nodename(self):
         return self.hostname or self.ip
 
+    @property
+    def in_scope(self):
+        ip = ip_address(self.ip)
+        for p in self.store.config.get("scope",[]):
+            if ip in ip_network(p):
+                return True
+        return False
+
     async def flush(self):
         await super().flush()
         async with self._lock_reached:
@@ -421,6 +429,8 @@ class Node(Mapping):
     async def get_reached(self):
         async with self._lock_reached:
             if self._reached is None:
+                if not self.in_scope:
+                    raise NodeUnreachable(f"Node is out of perimeter (see config)")
                 if self.jump_host is None:
                     try:
                         r,w = await asyncio.open_connection(self.ip, self.port)
@@ -467,6 +477,8 @@ class Node(Mapping):
         return creds,True,sess
 
     async def get_session(self):
+        if not self.in_scope:
+            raise NodeUnreachable(f"Node is out of perimeter (see config)")
         reached = await self.get_reached()
         if not reached:
             raise NodeUnreachable(f"cannot reach {self.shortname}")
@@ -498,10 +510,10 @@ class Node(Mapping):
             return self._session
 
     async def get_os(self):
-        session = await self.get_session()
         async with self._lock_os:
             if self._os is None:
                 async with self._semaphore_ssh_limit:
+                    session = await self.get_session()
                     r = await session.run("uname -o")
                 if "linux" in r.stdout.lower():
                     self._os = Linux(self)
