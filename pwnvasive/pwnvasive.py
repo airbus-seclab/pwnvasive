@@ -373,10 +373,10 @@ class Node(Mapping):
     _fields = {
         "ip":                  ("127.0.0.1", str),
         "port":                (22, int),
-        "controlled":          (None, bool),
-        "hostname":            (None, str),
         "reachable":           (None, bool),
+        "controlled":          (None, bool),
         "jump_host":           (None, str),
+        "hostname":            (None, str),
         "routes":              ([], list),
         "arp_cache":           ({}, dict),
         "tested_credentials":  ([], list),
