@@ -21,7 +21,7 @@ DEFAULT_STORE = {
     "state": {},
     "history": [],
     "config" : {
-        "scope": ["0.0.0.0/0"],
+        "scope": [],
     }
 }
 
@@ -41,7 +41,7 @@ class Store(object):
         if json_ is not None:
             j = json_
         elif fname and os.path.isfile(fname):
-            with open(fname) as f:
+            with open(fname, encoding="utf8") as f:
                 j = json.load(f)
         else:
             j = DEFAULT_STORE
@@ -74,7 +74,7 @@ class Store(object):
             fname = self.fname
         self.store["state"].update(self.objects)
         self.store["history"] = self.history.get_strings()
-        with open(fname+".tmp", "w") as f:
+        with open(fname+".tmp", "w", encoding="utf8") as f:
             json.dump(self.store, f, indent=4, cls=JSONEnc)
         os.rename(fname+".tmp", fname) # overwrite file only if json dump completed
 
@@ -98,4 +98,4 @@ class Store(object):
             for eventclass in event.__class__.mro():
                 for objclass in event.obj.__class__.mro():
                     for cb in self.callbacks[eventclass][objclass]:
-                        t = asyncio.create_task(cb(event), name=f"handler {cb}")
+                        _task = asyncio.create_task(cb(event), name=f"handler {cb}")

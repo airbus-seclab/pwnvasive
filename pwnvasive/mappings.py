@@ -7,6 +7,7 @@ from ipaddress import ip_address,ip_network
 
 from .os_ops import *
 from .exceptions import *
+from .events import *
 
 ### Mappings
 
@@ -50,12 +51,16 @@ class Mapping(object, metaclass=MappingMeta):
             self.values[k] = v
     @property
     def key(self):
-        return tuple(self.values[x] for x in self._key)
+        # _key is populated by metaclass if None
+        # pylint: disable=not-an-iterable
+        return tuple(self.values[x] for x in self._key) 
     @classmethod
     def str2key(cls, s):
         return tuple(t(v) for t,v in zip(cls._keytype, s.split(":")))
     @property
     def key_as_str(self):
+        # _key is populated by metaclass if None
+        # pylint: disable=not-an-iterable
         return ":".join(str(self.values.get(k, "")) for k in self._key)
     @property
     def shortname(self):
@@ -213,8 +218,11 @@ class Node(Mapping):
 
     @property
     def in_scope(self):
+        scope = self.store.config.get("scope",[])
+        if not scope:
+            return True
         ip = ip_address(self.ip)
-        for p in self.store.config.get("scope",[]):
+        for p in scope:
             if ip in ip_network(p):
                 return True
         return False
@@ -228,10 +236,10 @@ class Node(Mapping):
         async with self._lock_reached:
             if self._reached is None:
                 if not self.in_scope:
-                    raise NodeUnreachable(f"Node is out of perimeter (see config)")
+                    raise NodeUnreachable(f"Node [{self.nodename}] is out of perimeter (see 'config')")
                 if self.jump_host is None:
                     try:
-                        r,w = await asyncio.open_connection(self.ip, self.port)
+                        _r,w = await asyncio.open_connection(self.ip, self.port)
                     except OSError as e:
                         if e.errno != 111:
                             raise
@@ -242,11 +250,11 @@ class Node(Mapping):
                 else:
                     try:
                         jh = self.store.nodes[self.jump_host]
-                    except KeyError:
-                        raise Exception(f"Jump host not found in node list: {self.jump_host}")
+                    except KeyError as e:
+                        raise Exception(f"Jump host not found in node list: {self.jump_host}") from e
                     jhs = await jh.connect()
                     try:
-                        c,s = await jhs.create_connection(asyncssh.SSHTCPSession, self.ip,self.port)
+                        c,_s = await jhs.create_connection(asyncssh.SSHTCPSession, self.ip,self.port)
                     except asyncssh.ChannelOpenError:
                         self._reached = False
                     else:
@@ -276,7 +284,7 @@ class Node(Mapping):
 
     async def get_session(self):
         if not self.in_scope:
-            raise NodeUnreachable(f"Node is out of perimeter (see config)")
+            raise NodeUnreachable(f"Node [{self.nodename}] is out of perimeter (see 'config')")
         reached = await self.get_reached()
         if not reached:
             raise NodeUnreachable(f"cannot reach {self.shortname}")

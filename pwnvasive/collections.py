@@ -1,5 +1,7 @@
 from collections import OrderedDict,Counter
 from itertools import islice
+from .mappings import Mapping
+from .events import EventCreate,EventUpdate,EventDelete
 
 class Collection(object):
     def __init__(self, store, mapping, lst=None):
@@ -9,7 +11,7 @@ class Collection(object):
             lst = []
         keys = [x.key for x in lst]
         if len(set(keys)) != len(keys):
-            dups = [k for k,c in collections.Counter(keys).items() if c > 1]
+            dups = [k for k,c in Counter(keys).items() if c > 1]
             raise KeyError(f"Duplicate keys: {' '.join(dups)}")
         self.coll = OrderedDict([(x.key,x) for x in lst])
     def to_json(self):
@@ -24,14 +26,14 @@ class Collection(object):
         else:
             try:
                 selector = int(selector)
-            except:
+            except Exception: # pylint: disable=broad-except
                 pass
             else:
                 try:
                     o = next(islice(self.coll.values(), selector, None))
                     return o.key
-                except StopIteration:
-                    raise KeyError(selector)
+                except StopIteration as e:
+                    raise KeyError(selector) from e
             if type(selector) is str:
                 return self.mapping.str2key(selector)
     def __contains__(self, selector):
@@ -47,6 +49,10 @@ class Collection(object):
         key = self._selector_to_key(selector)
         obj = self.coll.pop(key)
         self.store.notify(EventDelete(obj))
+    def __setitem__(self, key, item):
+        self.coll[key] = item
+    def pop(self, key):
+        return self.coll.pop(key)
 
     def select(self, selector=None):
         if selector in [None, "all", "*"]:
@@ -63,7 +69,7 @@ class Collection(object):
         return iter(self.coll.values())
     def add(self, obj):
         if obj in self:
-            raise KeyError(f"Object already present")
+            raise KeyError("Object already present: {obj}")
         self.coll[obj.key] = obj
         self.store.notify(EventCreate(obj))
     def add_batch(self, lst):

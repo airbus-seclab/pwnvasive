@@ -22,6 +22,7 @@ async def aiomain(args=None):
 
     options = parser.parse_args(args)
 
+    # pylint: disable=broad-except
     try:
         with Store(options.database) as options.store:
             options.operations = Operations(options.store)

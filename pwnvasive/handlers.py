@@ -131,6 +131,6 @@ class Handlers(HandlerRegistry):
             pass
 
     @HandlerRegistry.register(([EventDataModified],[Login, Password, SSHKey]))
-    async def try_new_creds(self, event):
+    async def try_new_creds(self, _event):
         await asyncio.gather(*(node.connect() for node in self.store.nodes),
                              return_exceptions=True)

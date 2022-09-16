@@ -1,8 +1,9 @@
-import asyncio
 import asyncssh
 import re
 import graphviz
+from collections import defaultdict
 from ipaddress import ip_address,ip_network
+from .mappings import *
 
 class Operations(object):
     def __init__(self, store):
@@ -65,7 +66,7 @@ class Operations(object):
         for k,_ in self._re_key.findall(c):
             try:
                 k = k.decode("ascii")
-            except:
+            except UnicodeDecodeError:
                 continue
             key = SSHKey(store=self.store, sshkey=k, origin=origin)
             keys.append(key)
@@ -149,7 +150,7 @@ class Operations(object):
                 g.node(net)
         g.attr("node", shape="box", fillcolor="#eeee33", style="filled")
         for node in {n for ns in netgraph.values() for n in ns}:
-                g.node(node)
+            g.node(node)
         g.attr("edge", style="solid")
         for net,nodes in netgraph.items():
             for node in nodes:

@@ -11,7 +11,7 @@ class Linux(OS):
         return self.node.store.linuxfiles
 
     async def run(self, cmd):
-        sout,serr = await self.node.run(cmd)
+        sout,_serr = await self.node.run(cmd)
         return sout.strip()
 
     async def get_hostname(self):
@@ -43,7 +43,7 @@ class Linux(OS):
             routes.append(route)
         return routes
 
-    re_arpcache = re.compile("\(([0-9.]+)\) at ([0-9a-fA-F:]+) .* on ([0-9a-zA-Z]+)")
+    re_arpcache = re.compile(r"\(([0-9.]+)\) at ([0-9a-fA-F:]+) .* on ([0-9a-zA-Z]+)")
     async def get_arp_cache(self):
         out = await self.run("arp -an")
         cache = {}

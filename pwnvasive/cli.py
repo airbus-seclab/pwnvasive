@@ -2,15 +2,15 @@ import sys
 import asyncio
 import signal
 import json
-from collections import defaultdict
 from aiocmd import aiocmd
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.completion import WordCompleter,NestedCompleter,PathCompleter
 import pdb
 
-from .events import Event
+from .events import Event,EventUpdate
 from .exceptions import *
+from .mappings import Mapping
 
 ### Subclass aiocmd to pass arguments to PromptSession
 
@@ -33,6 +33,7 @@ class CmdWithCustomPromptSession(aiocmd.PromptToolkitCmd):
 ###
 
 class PwnCLI(CmdWithCustomPromptSession):
+    # pylint: disable=broad-except
     def __init__(self, options):
         self.options = options
         self.store = options.store
@@ -161,9 +162,11 @@ class PwnCLI(CmdWithCustomPromptSession):
     ########## DEBUG
 
     def do_eval(self, cmd):
+        # pylint: disable=eval-used
         print(eval(cmd))
 
     def do_pdb(self):
+        # pylint: disable=forgotten-debug-statement
         pdb.set_trace()
 
 
@@ -223,7 +226,7 @@ class PwnCLI(CmdWithCustomPromptSession):
     def do_add(self, obj, val=""):
         try:
             val = self.str2map(val)
-        except:
+        except Exception:
             print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
         else:
             Obj = self.store._objects[obj]
@@ -284,7 +287,7 @@ class PwnCLI(CmdWithCustomPromptSession):
                 print(f"----- {node.shortname} -----")
                 try:
                     print(c.decode("utf8"))
-                except:
+                except Exception:
                     print(c)
 
     def _cat_completions(self):
@@ -342,7 +345,7 @@ class PwnCLI(CmdWithCustomPromptSession):
 
         async def run_and_print(node, cmd):
             try:
-                sout,serr = await node.run(cmd)
+                sout,_serr = await node.run(cmd)
             except Exception as e:
                 print(f"-----[{node.shortname}]-----[ERROR]-----")
                 print(e)
@@ -351,7 +354,7 @@ class PwnCLI(CmdWithCustomPromptSession):
                 print(sout)
 
         nodes = self.store.nodes.select(selector)
-        res = await asyncio.gather(*[run_and_print(node, cmd) for node in nodes])
+        _res = await asyncio.gather(*[run_and_print(node, cmd) for node in nodes])
 
     def _run_completions(self):
         return self.selector_completer(self.store.nodes)
@@ -452,7 +455,7 @@ class PwnCLI(CmdWithCustomPromptSession):
 
     ########## EXTRACT
     def do_extract_ssh_keys(self, selector):
-        okeys,nkeys = self.op.extract_ssh_keys_from_nodes(selector)
+        _okeys,nkeys = self.op.extract_ssh_keys_from_nodes(selector)
         print(f"{nkeys} new potential ssh keys discovered")
 
     def _extract_ssh_keys_completions(self):
