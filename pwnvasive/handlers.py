@@ -121,6 +121,10 @@ class Handlers(HandlerRegistry):
     async def decrypt_ssh_keys(self, event):
         self.op.decrypt_ssh_keys(event.obj)
 
+    @HandlerRegistry.register(([EventDataModified],[Password]))
+    async def decrypt_ssh_keys_with_new_pwd(self, event):
+        self.op.decrypt_ssh_keys()
+
     @HandlerRegistry.register(([EventDataModified,EventNodeConnected],[Node]))
     async def identify_node(self, event):
         try:
