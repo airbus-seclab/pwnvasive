@@ -280,6 +280,8 @@ class Node(Mapping):
                 sess = await asyncssh.connect(host=self.ip, port=self.port, options=opt, tunnel=jh)
         except asyncssh.PermissionDenied:
             return creds,False,None
+        except Exception:
+            return creds,False,None
         return creds,True,sess
 
     async def get_session(self):
