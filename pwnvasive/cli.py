@@ -11,6 +11,7 @@ import pdb
 from .events import Event,EventUpdate
 from .exceptions import *
 from .mappings import Mapping
+from .services import Service
 
 ### Subclass aiocmd to pass arguments to PromptSession
 
@@ -40,8 +41,10 @@ class PwnCLI(CmdWithCustomPromptSession):
         self.prompt = "pwnvasive > "
         self.op = options.operations
         self.handlers = options.handlers
-        super().__init__()
         self.sessions = []
+        self.services = { sname: s(options) 
+                          for sname,s in Service.all_services.items() }
+        super().__init__()
 
 
     def str2map(self, s):
@@ -158,6 +161,30 @@ class PwnCLI(CmdWithCustomPromptSession):
     def _disconnect_completions(self):
         return self.selector_completer(self.store.nodes)
 
+    def do_service(self, svc=None, startstop="start"):
+        if svc is None:
+            for sname,svc in self.services.items():
+                print(f"{sname:15}: {svc.status}")
+        elif svc not in self.services:
+            print(f"ERROR: unknown service [{svc}]")
+        else:
+            start = startstop.lower() in ["start", "on", "1", "true", "ok"]
+            stop = startstop.lower() in ["stop", "off", "0", "false", "ko"]
+            if not (start ^ stop):
+                print("ERROR: syntax: service [<svc> [{on|off}]]")
+                return
+            service = self.services[svc]
+            if start and service.stopped:
+                m = service.start
+            elif stop and service.started:
+                m = service.stop
+            else:
+                print(f"Service {svc} is already {service.status}")
+                return
+            asyncio.create_task(m(),name=f"service {svc}")
+    def _service_completions(self):
+        startstop = WordCompleter(["start", "stop"])
+        return NestedCompleter({k:startstop for k in self.services})
 
     ########## DEBUG
 
