@@ -12,6 +12,7 @@ from .events import Event,EventUpdate
 from .exceptions import *
 from .mappings import Mapping
 from .services import Service
+from . import webapi
 
 ### Subclass aiocmd to pass arguments to PromptSession
 
