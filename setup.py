@@ -11,7 +11,7 @@ setup(
     # Metadata
     author = 'Philippe BIONDI',
     author_email = 'phil@secdev.org',
-    description = 'pwnvasive',
+    description = 'Semi-automatic discovery and lateralization tool',
     install_requires = [
         "asyncssh",
         "aiocmd",
