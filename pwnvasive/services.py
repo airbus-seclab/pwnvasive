@@ -11,7 +11,7 @@ class MetaService(type):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         if self.__name__ != "Service":
-            self.all_services[self.__name__]=  self
+            self.all_services[self.__name__] = self
 
 class Service(object, metaclass=MetaService):
     all_services = {}
