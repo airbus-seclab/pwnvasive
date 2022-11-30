@@ -2,6 +2,7 @@ import sys
 import asyncio
 import signal
 import json
+import pprint
 from aiocmd import aiocmd
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -246,7 +247,7 @@ class PwnCLI(CmdWithCustomPromptSession):
     def do_show(self, obj, selector=None):
         for obj in self.store.objects[obj].select(selector):
             print(f"----- {obj.key} -----")
-            print(json.dumps(obj.to_json(), indent=4))
+            pprint.pprint(obj.values)
 
     def _show_completions(self):
         return self.obj_selector_completer()
@@ -316,7 +317,7 @@ class PwnCLI(CmdWithCustomPromptSession):
                 try:
                     print(c.decode("utf8"))
                 except Exception:
-                    print(c)
+                    pprint.pprint(c)
 
     def _cat_completions(self):
         return NestedCompleter({k.key_as_str: WordCompleter(list(k.files))
