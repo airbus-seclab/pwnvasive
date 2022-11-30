@@ -18,6 +18,7 @@ setup(
         "graphviz",
         "bcrypt",
         "aiohttp",
+        "python-magic",
     ],
     license = 'GPLv2',
     # keywords = '',

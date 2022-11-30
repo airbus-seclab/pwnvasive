@@ -2,8 +2,10 @@ import asyncio
 import asyncssh
 import base64
 import zlib
+import hashlib
 from itertools import islice
 from ipaddress import ip_address,ip_network
+import magic
 
 from .os_ops import *
 from .exceptions import *
@@ -449,3 +451,65 @@ class Node(Mapping):
         os = await self.get_os()
         return os.filename_collection
 
+
+class FileContent(Mapping):
+    _name = "filecontents"
+    _key = ("hash",)
+    _fields = {
+        "hash":                 (None, str),
+        "content":             (None, str),
+        "mimetype":            (None, str),
+        "description":            (None, str),
+    }
+    _is_cache = ["hash", "mimetype"]
+    c2mime = magic.Magic(mime=True, uncompress=True)
+    c2desc = magic.Magic(mime=False, uncompress=True)
+    @classmethod
+    def from_json(cls, j, store=None):
+        if type(j.get("content")) is str:
+            j["content"] = cls.dec(j["content"])
+        return cls(store=store, **j)
+    def to_json(self):
+        if "content" not in self.values:
+            return self.values
+        v = self.values.copy()
+        v["content"] = self.enc(v["content"])
+        return v
+    @classmethod
+    def mimecontent(cls, content):
+        return cls.c2mime.from_buffer(content)
+    @classmethod
+    def desccontent(cls, content):
+        return cls.c2desc.from_buffer(content)
+    @classmethod
+    def hashkey(cls, content):
+        h = hashlib.md5(content).digest()
+        return base64.b85encode(h).decode("ascii")
+    @classmethod
+    def enc(cls, content):
+        return base64.b85encode(zlib.compress(content)).decode("ascii")
+    @classmethod
+    def dec(cls, content):
+        return zlib.decompress(base64.b85decode(content.encode("ascii")))
+    @classmethod
+    def createdict(cls, content):
+        if type(content) is str:
+            content = content.encode("utf8")
+        return dict(
+            hash = cls.hashkey(content),
+            mimetype = cls.mimecontent(content),
+            description = cls.desccontent(content),
+            content = content,
+        )
+
+    def __init__(self, store=None, **kargs):
+        content = kargs.pop("content",b"")
+        d = self.createdict(content)
+        d.update(kargs)
+        super().__init__(store, **d)
+    @property
+    def content(self):
+        return self.dec(self.values["content"])
+    @content.setter
+    def content(self, value):
+        self.values.update(self.createdict(content))
