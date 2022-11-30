@@ -24,8 +24,14 @@ class MappingMeta(type):
             _kt = tuple(_f[k][1] for k in _k)
             dct["_keytype"] = _kt
         return super().__new__(cls, name, bases, dct)
+    def __init__(self, *args, **kargs):
+        super().__init__(*args, **kargs)
+        if self.__name__ != "Mapping":
+            self._all_mappings[self.__name__] = self
 
 class Mapping(object, metaclass=MappingMeta):
+    _all_mappings = {}
+    _name = "noname?"
     _fields = {}
     _key = None # tuple. If None, metaclass will use the first field of _field.
     _keytype = None # automatically computed from _key and _fields by metaclass
@@ -96,6 +102,7 @@ class Mapping(object, metaclass=MappingMeta):
 
 
 class Net(Mapping):
+    _name = "networks"
     _fields = {
         "cidr": ("127.0.0.1/32", str),
         "scanned": (False, bool),
@@ -103,16 +110,19 @@ class Net(Mapping):
     _is_cache = ["scanned"]
 
 class Login(Mapping):
+    _name = "logins"
     _fields = {
         "login": (None, str),
     }
 
 class Password(Mapping):
+    _name = "passwords"
     _fields = {
         "password": (None, str),
     }
 
 class SSHKey(Mapping):
+    _name = "sshkeys"
     _fields = {
         "sshkey": (None, str),
         "origin": (None, str),
@@ -165,6 +175,7 @@ class SSHKey(Mapping):
         return f"<{dec} ssh key: {a} {h} {c} {self.origin}>"
 
 class LinuxFile(Mapping):
+    _name = "linuxfiles"
     _fields = {
         "path": ("", str),
     }
@@ -172,6 +183,7 @@ class LinuxFile(Mapping):
         return f"<path={self.path}>"
 
 class Node(Mapping):
+    _name = "nodes"
     _key = ("ip", "port")
     _fields = {
         "ip":                  ("127.0.0.1", str),

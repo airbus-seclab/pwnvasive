@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 import prompt_toolkit
 
-from .mappings import Net,Node,Login,Password,SSHKey,LinuxFile
+from .mappings import Mapping
 from .collections import Collection
 from .exceptions import *
 
@@ -26,14 +26,7 @@ DEFAULT_STORE = {
 }
 
 class Store(object):
-    _objects = {
-        "networks": Net,
-        "nodes": Node,
-        "logins": Login,
-        "passwords": Password,
-        "sshkeys": SSHKey,
-        "linuxfiles": LinuxFile,
-    }
+    _objects = { m._name:m for m in Mapping._all_mappings.values() }
     def __init__(self, fname=None, json_=None):
         self.eventq = asyncio.Queue()
         self.callbacks = defaultdict(lambda : defaultdict(set))
