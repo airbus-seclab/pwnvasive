@@ -362,21 +362,18 @@ class Node(Mapping):
             return False
 
     def remember_file(self, path, content):
-        c = base64.b85encode(zlib.compress(content)).decode("ascii")
-        if path in self.files:
-            if self.files[path] == c:
-                return
-        self.files[path] = c
+        f = FileContent(self.store, content=content)
+        self.files[path] = f.hash
+        self.store.filecontents.add(f)
         self.store.notify(EventNodeFile(self, path=path))
 
     def recall_file(self, path):
-        c = self.files[path]
-        return zlib.decompress(base64.b85decode(c.encode("ascii")))
+        h = self.files[path]
+        return self.store.filecontents[h].content
 
     def iter_files(self):
-        for f,c in self.files.items():
-            c2 = zlib.decompress(base64.b85decode(c.encode("ascii")))
-            yield f,c2
+        for f,h in self.files.items():
+            yield f,self.store.filecontents[h].content
 
     async def connect(self):
         return await self.get_session()
