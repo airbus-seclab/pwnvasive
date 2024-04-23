@@ -50,11 +50,16 @@ class PwnCLI(CmdWithCustomPromptSession):
 
 
     def str2map(self, s):
+        if s.startswith("@"):
+            s = open(s[1:]).read()
         try:
-            return json.loads(s)
+            ret = json.loads(s)
         except json.JSONDecodeError:
-            return { k.strip():v.strip()
-                     for k,v in [x.strip().split("=",1) for x in s.split(" ")] }
+            ret = [{ k.strip():v.strip()
+                     for k,v in [x.strip().split("=",1) for x in s.split(" ")] }]
+        if type(ret) is not list:
+            ret = [ret]
+        return ret
 
 
 
@@ -254,14 +259,16 @@ class PwnCLI(CmdWithCustomPromptSession):
 
     def do_add(self, obj, val=""):
         try:
-            val = self.str2map(val)
+            vals = self.str2map(val)
         except Exception:
             print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
         else:
-            Obj = self.store._objects[obj]
-            o = Obj(store=self.store, **val)
-            print(f"adding {o}")
-            self.store.objects[obj].add(o)
+            print(vals)
+            for val in vals:
+                Obj = self.store._objects[obj]
+                o = Obj(store=self.store, **val)
+                print(f"adding {o}")
+                self.store.objects[obj].add(o)
 
     def _add_completions(self):
         dct = {}
@@ -285,12 +292,13 @@ class PwnCLI(CmdWithCustomPromptSession):
         objs = self.store.objects[obj].select(selector)
         for o in objs:
             print(f"Updating {o}")
-            for f,(_,t) in o._fields.items():
-                if f in val:
-                    old = o.values.get(f,None)
-                    new_ = t(val[f])
-                    print(f"  + {f}: {old} --> {new_}")
-                    o.values[f] = new_
+            for val in vals:
+                for f,(_,t) in o._fields.items():
+                    if f in val:
+                        old = o.values.get(f,None)
+                        new_ = t(val[f])
+                        print(f"  + {f}: {old} --> {new_}")
+                        o.values[f] = new_
         self.store.objects[obj].rehash()
 
     _update_completions = _add_completions
