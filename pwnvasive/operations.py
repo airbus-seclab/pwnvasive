@@ -44,15 +44,19 @@ class Operations(object):
         nnodes = self.store.nodes.add_batch(extnodes)
         nnets = self.store.networks.add_batch(extnets)
         return nnodes,nnets
-    def inspect_known_hosts(self, node):
+    def inspect_known_hosts(self, content):
         extnodes = []
-        for pth in node.files:
-            if pth.endswith("known_hosts") or pth.endswith("known_hosts2"):
-                try:
-                    c = node.recall_file(pth).decode("ascii")
-                except UnicodeDecodeError:
-                    continue
-                kh = asyncssh.import_known_hosts(c)
+        try:
+            if type(content) is bytes:
+                content = content.decode("ascii")
+        except UnicodeDecodeError:
+            pass
+        else:
+            try:
+                kh = asyncssh.import_known_hosts(content)
+            except Exception:
+                pass
+            else:
                 for h in kh._exact_entries.keys():
                     extnodes.append(Node(store=self.store, ip=h, jump_host=node.shortname))
         nnodes = self.store.nodes.add_batch(extnodes)

@@ -362,7 +362,7 @@ class Node(Mapping):
             return False
 
     def remember_file(self, path, content):
-        f = FileContent(self.store, content=content)
+        f = FileContent(self.store, content=content, sources={self.key_as_str: path})
         self.files[path] = f.hash
         self.store.filecontents.add(f)
         self.store.notify(EventNodeFile(self, path=path))
@@ -457,6 +457,7 @@ class FileContent(Mapping):
         "content":             (None, str),
         "mimetype":            (None, str),
         "description":            (None, str),
+        "sources":             ({}, dict),
     }
     _is_cache = ["hash", "mimetype"]
     c2mime = magic.Magic(mime=True, uncompress=True)

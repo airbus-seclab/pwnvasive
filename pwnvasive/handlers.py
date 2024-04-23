@@ -108,14 +108,17 @@ class Handlers(HandlerRegistry):
     async def inspect_routes(self, event):
         self.op.inspect_routes(event.obj)
 
-    @HandlerRegistry.register(([EventNodeFile],[Node]))
+    @HandlerRegistry.register(([EventDataModified],[FileContent]))
     async def inspect_known_hosts(self, event):
-        self.op.inspect_routes(event.obj)
+        f = event.obj
+        for n,fn in f.sources:
+            if "known_host" in fn:
+                n = self.store.nodes[next(n for n in f.sources)]
+        self.op.inspect_known_hosts(event.obj)
 
-    @HandlerRegistry.register(([EventNodeFile],[Node]))
+    @HandlerRegistry.register(([EventDataModified],[FileContent]))
     async def extract_ssh_keys(self, event):
-        c = event.obj.recall_file(event.path)
-        self.op.extract_ssh_keys_from_content(c)
+        self.op.extract_ssh_keys_from_content(event.obj.content)
 
     @HandlerRegistry.register(([EventDataModified],[SSHKey]))
     async def decrypt_ssh_keys(self, event):
