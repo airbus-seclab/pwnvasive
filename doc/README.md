@@ -37,7 +37,7 @@ config  [key=None] [op=None] [val=None]
 ```
 
 ### del
-Delete an object instance
+Delete the instance of an object
 ```
 del <obj> <selector>                       
 ```
