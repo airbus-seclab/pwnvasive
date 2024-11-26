@@ -90,6 +90,12 @@ List objects and instances of an object
 ls  [obj=None] [selector=None]             
 ```
 
+### monitor           
+Display the actions that pwnvasive performs internally
+```
+monitor <what> [onoff='on']
+```
+
 ### pdb
 Debug pwnvasive
 ```
