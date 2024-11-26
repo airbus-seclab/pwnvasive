@@ -19,7 +19,7 @@ cat <selector> <pth>
 ```
 
 ### cnx
-Creating a session with a node
+Create a session with a node
 ```
 cnx  [selector=None]                       
 ```
@@ -49,7 +49,7 @@ disconnect  [selector=None]
 ```
 
 ### eval
-Evaluating a function
+Evaluate a function
 ```
 eval <cmd>                                 
 ```
@@ -115,7 +115,7 @@ run <selector> <cmd>
 ```
 
 ### save
-Saving the work base
+Save the database
 ```
 save  [fname=None]                         
 ```
