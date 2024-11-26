@@ -282,11 +282,11 @@ class PwnCLI(CmdWithCustomPromptSession):
             for k,_ in self.store._objects.items()
         })
 
-    def do_update(self, obj, selector, val):
+    def do_update(self, obj, selector, vals):
         try:
-            val = self.str2map(val)
+            vals = self.str2map(vals)
         except:
-            print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
+            print(f"could not parse [{vals}]. Should be field=value[,f=v[,...]]")
             raise
 
         objs = self.store.objects[obj].select(selector)
