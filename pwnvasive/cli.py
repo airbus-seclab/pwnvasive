@@ -13,7 +13,7 @@ from .events import Event,EventUpdate
 from .exceptions import *
 from .mappings import Mapping
 from .services import Service
-from . import webapi
+
 
 ### Subclass aiocmd to pass arguments to PromptSession
 
@@ -500,7 +500,7 @@ class PwnCLI(CmdWithCustomPromptSession):
 
 
     def do_decrypt_ssh_keys(self, selector=None):
-        n = self.store.op.decrypt_ssh_keys(selector)
+        n = self.op.decrypt_ssh_keys(selector)
         print(f"Decrypted {n} ssh keys")
 
     def do_extract_networks(self, selector=None):

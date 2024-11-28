@@ -282,8 +282,7 @@ class Node(Mapping):
     async def _test_creds(self, **creds):
         use_creds = creds.copy()
         ck = use_creds.pop("client_keys",None)
-        if ck:
-            use_creds["client_keys"] = asyncssh.import_private_key(ck)
+        use_creds["client_keys"] = asyncssh.import_private_key(ck) if ck else None
         opt = asyncssh.SSHClientConnectionOptions(**use_creds, known_hosts=None)
         if self.jump_host:
             jh = await self.store.nodes[self.jump_host].connect()
