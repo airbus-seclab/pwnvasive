@@ -55,7 +55,7 @@ class PwnCLI(CmdWithCustomPromptSession):
         try:
             ret = json.loads(s)
         except json.JSONDecodeError:
-            ret = [{ k.strip():v.strip()
+            ret = [{ k.strip(): v.strip() if not v.startswith("@") else open(v[1:].strip()).read()
                      for k,v in [x.strip().split("=",1) for x in s.split(" ")] }]
         if type(ret) is not list:
             ret = [ret]
