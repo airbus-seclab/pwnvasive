@@ -13,7 +13,7 @@ from .events import Event,EventUpdate
 from .exceptions import *
 from .mappings import Mapping
 from .services import Service
-from . import webapi
+
 
 ### Subclass aiocmd to pass arguments to PromptSession
 
@@ -282,11 +282,11 @@ class PwnCLI(CmdWithCustomPromptSession):
             for k,_ in self.store._objects.items()
         })
 
-    def do_update(self, obj, selector, val):
+    def do_update(self, obj, selector, vals):
         try:
-            val = self.str2map(val)
+            vals = self.str2map(vals)
         except:
-            print(f"could not parse [{val}]. Should be field=value[,f=v[,...]]")
+            print(f"could not parse [{vals}]. Should be field=value[,f=v[,...]]")
             raise
 
         objs = self.store.objects[obj].select(selector)
@@ -500,7 +500,7 @@ class PwnCLI(CmdWithCustomPromptSession):
 
 
     def do_decrypt_ssh_keys(self, selector=None):
-        n = self.store.op.decrypt_ssh_keys(selector)
+        n = self.op.decrypt_ssh_keys(selector)
         print(f"Decrypted {n} ssh keys")
 
     def do_extract_networks(self, selector=None):
